@@ -14,9 +14,12 @@
 */
 void test_validate_my_username()
 {
-    /**
-     * TODO: Replace the line below with your code here as described above to verify your /conf/username.txt 
-     * config file and my_username() functions are setup properly
-     */
-    TEST_ASSERT_TRUE_MESSAGE(false,"AESD students, please fix me!");
+    // objective 1 - retrieve hard-coded username
+    const char *username = my_username();
+
+    // objective 2 - retrieve autotest submodule username
+    char *conf_username = malloc_username_from_conf_file();
+
+    // objective 3 - assert using the two username strings
+    TEST_ASSERT_EQUAL_STRING(username, conf_username);
 }
