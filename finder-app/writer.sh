@@ -11,6 +11,8 @@ else
     WRITESTR=$2
 fi
 
-# Add string to file
+# create necessary parent directories using -p flag in mkdir, trimming out the filename
 mkdir -p "${WRITEFILE%/*}" && touch $WRITEFILE
+
+# redirect output of echo from stdout (terminal) to the file path specified
 echo "${WRITESTR}" > $WRITEFILE
