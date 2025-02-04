@@ -9,14 +9,20 @@
 */
 bool do_system(const char *cmd)
 {
+	// return false if the CMD is empty
+	if(cmd == NULL) {
+		return false;
+	}
 
-/*
- * TODO  add your code here
- *  Call the system() function with the command set in the cmd
- *   and return a boolean true if the system() call completed with success
- *   or false() if it returned a failure
-*/
-
+	// execute system()
+	int rc = system(cmd);
+	
+	// handle errors returned from system()
+	if(rc != 0) {
+		return false;
+	}
+	
+	// if program reaches here, no errors should be returned
     return true;
 }
 
@@ -45,9 +51,6 @@ bool do_exec(int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
 
 /*
  * TODO:
@@ -59,6 +62,35 @@ bool do_exec(int count, ...)
  *
 */
 
+	// check if the command given is an absolute path
+	if(command[0][0] != '/') {
+		return false;
+	}
+
+	// fork here and check status
+	pid_t forked_pid = fork();
+	if(forked_pid == -1) {
+		return false; 
+	}
+
+	// execute if successful
+	int execv_result = execv(command[0], command);
+	if(execv_result != 0) {
+		return false;
+	}
+
+	// waitpid
+	int status;
+	if(waitpid(forked_pid, &status, 0) == -1) {
+		return false;
+	}
+
+	// check child process status
+	if(WIFEXITED(status)) {
+		return false;
+	}
+
+	// end of user code; exit function here
     va_end(args);
 
     return true;
@@ -80,10 +112,6 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
         command[i] = va_arg(args, char *);
     }
     command[count] = NULL;
-    // this line is to avoid a compile warning before your implementation is complete
-    // and may be removed
-    command[count] = command[count];
-
 
 /*
  * TODO
@@ -92,7 +120,49 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
+	
+	// check if path is absolute
+	if(command[0][0] != '/') {
+		return false;
+	}
 
+	// open the file to write to
+	int f = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+	if(f < 0) {
+		return false;
+	}
+
+	// invoke fork()
+	int forked_pid = fork();
+	if(forked_pid == -1) {
+		return false;
+	}
+
+	// execute if successful
+	if(dup2(f, 1) < 0) {
+		close(f);
+		return false;
+	}
+	int execv_result = execv(command[0], command);
+	if(execv_result != 0) {
+		return false;
+	}
+
+	// waitpid
+	int status;
+	if(waitpid(forked_pid, &status, 0) == -1) {
+		return false;
+	}
+
+	// check status of child process
+	if(WIFEXITED(status)) {
+		return false;
+	}
+
+	// close file
+	close(f);
+
+	// end of user code; exit function here
     va_end(args);
 
     return true;
