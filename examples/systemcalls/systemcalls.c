@@ -52,42 +52,32 @@ bool do_exec(int count, ...)
     }
     command[count] = NULL;
 
-/*
- * TODO:
- *   Execute a system command by calling fork, execv(),
- *   and wait instead of system (see LSP page 161).
- *   Use the command[0] as the full path to the command to execute
- *   (first argument to execv), and use the remaining arguments
- *   as second argument to the execv() command.
- *
-*/
+	// check if command is absolute
+	char *command_path = command[0];
+	if(command_path[0] != '/') return false;
 
-	// check if the command given is an absolute path
-	if(command[0][0] != '/') {
+	// begin calling execv
+	int status;
+	pid_t pid;
+
+	pid = fork();
+	if(pid == -1) {
 		return false;
-	}
-
-	// fork here and check status
-	pid_t forked_pid = fork();
-	if(forked_pid == -1) {
-		return false; 
-	}
-
-	// execute if successful
-	int execv_result = execv(command[0], command);
-	if(execv_result != 0) {
+	} else if(pid == 0) {
+		execv(command[0], command);
 		return false;
 	}
 
 	// waitpid
-	int status;
-	if(waitpid(forked_pid, &status, 0) == -1) {
-		return false;
-	}
+	if(waitpid(pid, &status, 0) == -1) return false;
 
-	// check child process status
+	// check status
 	if(WIFEXITED(status)) {
-		return false;
+		if(WEXITSTATUS(status) == 0) {
+			return true;
+		} else {
+			return false;
+		}
 	}
 
 	// end of user code; exit function here
@@ -113,6 +103,7 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
     }
     command[count] = NULL;
 
+	command[count] = command[count];
 /*
  * TODO
  *   Call execv, but first using https://stackoverflow.com/a/13784315/1446624 as a refernce,
@@ -120,47 +111,40 @@ bool do_exec_redirect(const char *outputfile, int count, ...)
  *   The rest of the behaviour is same as do_exec()
  *
 */
-	
-	// check if path is absolute
-	if(command[0][0] != '/') {
-		return false;
-	}
 
-	// open the file to write to
-	int f = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
-	if(f < 0) {
-		return false;
-	}
+	// check if command is absolute
+	char *command_path = command[0];
+	if(command_path[0] != '/') return false;
 
-	// invoke fork()
-	int forked_pid = fork();
-	if(forked_pid == -1) {
-		return false;
-	}
+	// begin calling execv
+	int status;
+	pid_t pid;
+	int fd = open(outputfile, O_WRONLY|O_TRUNC|O_CREAT, 0644);
+	if(fd < 0) return false;
 
-	// execute if successful
-	if(dup2(f, 1) < 0) {
-		close(f);
+	pid = fork();
+	if(pid == -1) {
 		return false;
-	}
-	int execv_result = execv(command[0], command);
-	if(execv_result != 0) {
+	} else if(pid == 0) {
+		if(dup2(fd,1) < 0) return false;
+		execv(command[0], command);
 		return false;
 	}
 
 	// waitpid
-	int status;
-	if(waitpid(forked_pid, &status, 0) == -1) {
-		return false;
-	}
+	if(waitpid(pid, &status, 0) == -1) return false;
 
-	// check status of child process
+	// check status
 	if(WIFEXITED(status)) {
-		return false;
+		if(WEXITSTATUS(status) == 0) {
+			return true;
+		} else {
+			return false;
+		}
 	}
 
 	// close file
-	close(f);
+	close(fd);
 
 	// end of user code; exit function here
     va_end(args);

@@ -6,7 +6,7 @@
 #include <unistd.h>
 #include <sys/wait.h>
 #include <fcntl.h>
-
+#include <string.h>
 
 bool do_system(const char *command);
 
