@@ -74,13 +74,13 @@ mkdir -p var/log
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
 then
-git clone git://busybox.net/busybox.git
+	git clone git://busybox.net/busybox.git
     cd busybox
     git checkout ${BUSYBOX_VERSION}
     # TODO:  Configure busybox
 	make distclean
-	make defconfig
-	make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}
+	make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} defconfig
+	make -j4 ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} all
 else
     cd busybox
 fi
@@ -110,14 +110,7 @@ done
 # TODO: Make device nodes
 sudo mknod -m 666 ${OUTDIR}/rootfs/dev/null c 1 3
 sudo mknod -m 666 ${OUTDIR}/rootfs/dev/console c 5 1
-sudo mknod -m 666 ${OUTDIR}/rootfs/dev/zero c 1 5
-sudo mknod -m 666 ${OUTDIR}/rootfs/dev/tty c 5 0
-sudo mknod -m 666 ${OUTDIR}/rootfs/dev/tty0 c 4 0
-sudo mknod -m 666 ${OUTDIR}/rootfs/dev/tty1 c 4 1
-sudo mknod -m 666 ${OUTDIR}/rootfs/dev/random c 1 8
-sudo mknod -m 666 ${OUTDIR}/rootfs/dev/urandom c 1 9
 sudo mknod -m 666 ${OUTDIR}/rootfs/dev/ram0 b 1 0
-sudo mknod -m 666 ${OUTDIR}/rootfs/dev/initrd b 1 250
 
 # TODO: Clean and build the writer utility
 cd ${FINDER_APP_DIR}
