@@ -70,6 +70,7 @@ cd rootfs
 mkdir -p bin dev etc home lib lib64 proc sbin sys tmp usr var
 mkdir -p usr/bin usr/lib usr/sbin
 mkdir -p var/log
+mkdir -p home/conf
 
 cd "$OUTDIR"
 if [ ! -d "${OUTDIR}/busybox" ]
@@ -87,47 +88,55 @@ fi
 
 # TODO: Make and install busybox
 make CONFIG_PREFIX=${OUTDIR}/rootfs ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE} install
+chmod u+s ${OUTDIR}/rootfs/bin/busybox
 cd ${OUTDIR}/rootfs
 
 echo "Library dependencies"
-${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter"
-${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library"
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter"
+${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library"
 
 # TODO: Add library dependencies to rootfs
 # www.gnu.org/software/sed/manual/sed.html#sed-regular-expressions to figure out how to extract a string from output of previous command
 # Asked ChatGPT on how to approach the multi-line output of the shared libraries line
-INTERPRETER_PATH=$(${CROSS_COMPILE}readelf -a bin/busybox | grep "program interpreter" | sed -E 's/\[.*: \/(.*)\]/\1/')
+INTERPRETER_PATH=$(${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "program interpreter" | sed -E 's/\[.*: \/(.*)\]/\1/')
 mkdir -p "$(dirname $INTERPRETER_PATH)"
 INTERPRETER_PATH=$(echo $INTERPRETER_PATH | tr -d "[:space:]")
 FULL_INTERPRETER_PATH="${TOOLCHAIN_SYSROOT}/${INTERPRETER_PATH}"
 cp $FULL_INTERPRETER_PATH ${OUTDIR}/rootfs/lib
 
-SHARED_LIBS=$(${CROSS_COMPILE}readelf -a bin/busybox | grep "Shared library" | sed -E 's/.*\[(.*)]/\1/')
+SHARED_LIBS=$(${CROSS_COMPILE}readelf -a ${OUTDIR}/rootfs/bin/busybox | grep "Shared library" | sed -E 's/.*\[(.*)]/\1/')
 for CURR_LIB in $SHARED_LIBS; do
+	echo $CURR_LIB
 	cp ${TOOLCHAIN_SYSROOT}/lib64/${CURR_LIB} ${OUTDIR}/rootfs/lib64
 done
 
 # TODO: Make device nodes
 sudo mknod -m 666 ${OUTDIR}/rootfs/dev/null c 1 3
 sudo mknod -m 666 ${OUTDIR}/rootfs/dev/console c 5 1
+sudo mknod -m 666 ${OUTDIR}/rootfs/dev/tty c 5 0
 
 # TODO: Clean and build the writer utility
 cd ${FINDER_APP_DIR}
 make clean
-make writer
+make ARCH=${ARCH} CROSS_COMPILE=${CROSS_COMPILE}  writer
 cp writer ${OUTDIR}/rootfs/home/
 
 # TODO: Copy the finder related scripts and executables to the /home directory
 # on the target rootfs
 cp ${FINDER_APP_DIR}/finder.sh ${OUTDIR}/rootfs/home/
 cp ${FINDER_APP_DIR}/finder-test.sh ${OUTDIR}/rootfs/home/
-cp ${FINDER_APP_DIR}/../conf/assignment.txt ${OUTDIR}/rootfs/home/
-cp ${FINDER_APP_DIR}/../conf/username.txt ${OUTDIR}/rootfs/home/
+cp ${FINDER_APP_DIR}/../conf/assignment.txt ${OUTDIR}/rootfs/home/conf/
+cp ${FINDER_APP_DIR}/../conf/username.txt ${OUTDIR}/rootfs/home/conf/
 cp ${FINDER_APP_DIR}/autorun-qemu.sh ${OUTDIR}/rootfs/home/
 
 # TODO: Chown the root directory
-sudo chown -R root:root ${OUTDIR}/rootfs
+sudo chown -R root:root ${OUTDIR}/rootfs/
+sudo chmod u+s ${OUTDIR}/rootfs/bin/busybox
 
 # TODO: Create initramfs.cpio.gz
-find ${OUTDIR}/rootfs/ | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
+# Received assistance from Dan; needed to cd to the rootfs and then use find, or the /tmp/ path would be included in the rootfs
+# this would cause a reference to the /tmp at the rootfs when starting qemu, which would mean the other directories (bin, sbin, etc.)
+# don't exist.
+cd "${OUTDIR}/rootfs"
+find . | cpio -H newc -ov --owner root:root > ${OUTDIR}/initramfs.cpio
 gzip -f ${OUTDIR}/initramfs.cpio
