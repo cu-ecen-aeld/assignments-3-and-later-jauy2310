@@ -16,9 +16,8 @@ struct thread_data{
 	 */
 
     /**
-     * Thread objects
+     * Thread Mutex
      */
-    pthread_t *thread;
     pthread_mutex_t *mutex;
     
     /**
