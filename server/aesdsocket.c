@@ -53,39 +53,8 @@ int main(int argc, char *argv[]) {
     socklen_t client_address_len = sizeof(client_address_info);
     char client_ip[INET_ADDRSTRLEN];
 
-    // check command line options with getopt()
-    // https://www.gnu.org/software/libc/manual/html_node/Example-of-Getopt.html
-    int c;
-    bool is_daemon = false;
-    while ((c = getopt(argc, argv, "dh")) != -1) {
-        switch(c) {
-            case 'd':
-                is_daemon = true;
-                break;
-            case '?':
-                printf("Unknown option `-%c'.\n", optopt);
-                exit(-1);
-        }
-    }
-
-    // start socket daemon, assuming user passed -d as a flag
-    // https://stackoverflow.com/questions/17078947/daemon-socket-server-in-c
-    // read the above post for classic steps on making a daemon from an executed process
-    if (is_daemon) {
-        // change to root
-        chdir("/");
-
-        // exit if parent process
-        if (fork() > 0) _exit(0);
-
-        // redirect standard outputs to /dev/null
-        close(0);
-        close(1);
-        close(2);
-        open("/dev/null", O_RDWR);
-        dup(0);
-        dup(0);
-    }
+    // start daemon if -d flag was passed
+    start_daemon(argc, argv);
 
     // main loop; keep accepting/closing connections 
     while (1) {
@@ -184,4 +153,40 @@ void signal_handler() {
 
     // exit
     exit(1);
+}
+
+void start_daemon(int argc, char **argv) {
+    // check command line options with getopt()
+    // https://www.gnu.org/software/libc/manual/html_node/Example-of-Getopt.html
+    int c;
+    bool is_daemon = false;
+    while ((c = getopt(argc, argv, "d")) != -1) {
+        switch(c) {
+            case 'd':
+                is_daemon = true;
+                break;
+            case '?':
+                printf("Unknown option `-%c'.\n", optopt);
+                exit(-1);
+        }
+    }
+
+    // start socket daemon, assuming user passed -d as a flag
+    // https://stackoverflow.com/questions/17078947/daemon-socket-server-in-c
+    // read the above post for classic steps on making a daemon from an executed process
+    if (is_daemon) {
+        // change to root
+        chdir("/");
+
+        // exit if parent process
+        if (fork() > 0) _exit(0);
+
+        // redirect standard outputs to /dev/null
+        close(0);
+        close(1);
+        close(2);
+        open("/dev/null", O_RDWR);
+        dup(0);
+        dup(0);
+    }
 }

@@ -26,5 +26,27 @@ static int tmpdata_fd;
 static int server_socket_fd;
 static int client_fd;
 
-// signal handler prototypes
+// function prototypes
+
+/**
+ * signal_handler()
+ * 
+ * Handles signals such as SIGINT or SIGTERM to gracefully shut down socket server
+ * 
+ * @return none
+ */
 void signal_handler();
+
+/**
+ * start_daemon()
+ * 
+ * Checks command line arguments to see if a "-d" flag was passed, and if so, starts
+ * the socket server in daemon mode
+ * 
+ * @param argc      Number of command line arguments, passed through main()
+ * @param argv      String array of command line arguments, passed through main()
+ * 
+ * @return none
+ */
+void start_daemon(int argc, char **argv);
+
