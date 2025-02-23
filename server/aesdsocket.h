@@ -26,6 +26,9 @@ static int tmpdata_fd;
 static int server_socket_fd;
 static int client_fd;
 
+// server addrinfo
+struct addrinfo *server_address_info;
+
 // function prototypes
 
 /**

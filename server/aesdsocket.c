@@ -20,7 +20,6 @@ int main(int argc, char *argv[]) {
     hints.ai_flags = AI_PASSIVE;
 
     // get address info, storing it into server_address_info
-    struct addrinfo *server_address_info;
     rc = getaddrinfo(NULL, PORT, &hints, &server_address_info);
     if (rc != 0) goto exit_free_addrinfo_struct;
 
@@ -109,7 +108,6 @@ int main(int argc, char *argv[]) {
                         send(client_fd, file_content, bytes_read, 0);
                     }
                 } else {
-                    syslog(LOG_DEBUG, "Writing to buffer: %c", read_buffer[i]);
                     write_buffer[write_buffer_index++] = read_buffer[i];
                 }
             }
@@ -135,6 +133,7 @@ exit_free_addrinfo_struct:
     freeaddrinfo(server_address_info);
 
     // return
+    remove(TMPDATA_PATH);
     closelog();
     return rc;
 }
@@ -147,6 +146,9 @@ void signal_handler() {
     close(tmpdata_fd);
     close(client_fd);
     close(server_socket_fd);
+
+    // attempt to free addrinfo struct
+    freeaddrinfo(server_address_info);
     
     // delete file
     remove(TMPDATA_PATH);
