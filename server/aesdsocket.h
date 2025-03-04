@@ -11,6 +11,7 @@
 #include <syslog.h>
 #include <fcntl.h>
 #include <signal.h>
+#include <stdarg.h>
 
 // include network libraries
 #include <sys/types.h>
@@ -34,15 +35,22 @@
 #define NUM_CONNECTIONS     10
 #define TMPDATA_PATH        "/var/tmp/aesdsocketdata"
 #define BUFFER_SIZE         1024 * 1024
+#define TIMER_FREQ_S        10
 
-// server socket file descriptor
+// server details
 static int server_socket_fd;
-
-// server addrinfo
 struct addrinfo *server_address_info;
 
 // tmpdata file mutex
 pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
+
+// timestamps
+timer_t timer_id;
+struct sigevent timer_sig_event;
+struct itimerspec timer_spec;
+
+// signal actions
+struct sigaction sigact;
 
 /**************************************************************************************************
  * FUNCTION PROTOTYPES
@@ -55,6 +63,15 @@ pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
  * @return none
  */
 void initialize_server();
+
+/**
+ * initialize_timer()
+ * 
+ * Creates a timer that will write to a file on an interval, triggered on SIGALRM
+ * 
+ * @return 0 on success, -1 on failure
+ */
+int initialize_timer();
 
 /**
  * accept_connections()
@@ -79,7 +96,7 @@ void *client_handler(void *arg);
  * 
  * @return none
  */
-void signal_handler();
+void signal_handler(int sig);
 
 /**
  * start_daemon()

@@ -4,11 +4,21 @@
  * MAIN
  **************************************************************************************************/
 int main(int argc, char *argv[]) {
-    // initialize server functions
-    initialize_server();
+    // open syslog
+    openlog(NULL, LOG_PID | LOG_CONS | LOG_NDELAY, LOG_USER);
 
     // return values for functions
     int rc = 0;
+
+    // initialize timer for timestamps
+    rc = initialize_timer();
+    if (rc != 0) {
+        syslog(LOG_ERR, "Error configuring timer.");
+        return -1;
+    }
+
+    // initialize server functions
+    initialize_server();
 
     // getaddrinfo setup - hints
     syslog(LOG_INFO, "Retrieving server address info.");
@@ -74,12 +84,52 @@ exit_free_addrinfo_struct:
  * FUNCTION DEFINITIONS - SERVER
  **************************************************************************************************/
 void initialize_server() {
-    // open syslog
-    openlog(NULL, LOG_PID | LOG_CONS | LOG_NDELAY, LOG_USER);
+    // set up signal handler
+    // https://stackoverflow.com/questions/2485028/signal-handling-in-c
+    // https://pubs.opengroup.org/onlinepubs/009695399/functions/sigaction.html
+    sigact.sa_handler = signal_handler;
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_flags = 0;
+    sigaction(SIGALRM, &sigact, (struct sigaction *)NULL);
+    sigaction(SIGINT, &sigact, (struct sigaction *)NULL);
+    sigaction(SIGTERM, &sigact, (struct sigaction *)NULL);
 
-    // signal handler
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
+    // initialize thread manager
+    SLIST_INIT(&thread_manager);
+}
+
+int initialize_timer()
+{
+    // return code
+    int rc = 0;
+
+    // create the signal event for the interval timer
+    memset(&timer_sig_event, 0, sizeof(timer_sig_event));
+    timer_sig_event.sigev_notify = SIGEV_SIGNAL;
+    timer_sig_event.sigev_signo = SIGALRM;
+    timer_sig_event.sigev_value.sival_ptr = &timer_id;
+
+    rc = timer_create(CLOCK_REALTIME, &timer_sig_event, &timer_id);
+    if (rc == -1) {
+        syslog(LOG_ERR, "Creating timer failed");
+        return rc;
+    }
+
+    // configure the timer's interval value
+    timer_spec.it_value.tv_sec = TIMER_FREQ_S;
+    timer_spec.it_value.tv_nsec = 0;
+    timer_spec.it_interval.tv_sec = TIMER_FREQ_S;
+    timer_spec.it_interval.tv_nsec = 0;
+
+    rc = timer_settime(timer_id, 0, &timer_spec, NULL);
+    if (rc == -1) {
+        syslog(LOG_ERR, "Setting timer failed");
+        return rc;
+    }
+
+    // success; return
+    syslog(LOG_INFO, "Timer set successfully.");
+    return 0;
 }
 
 void accept_connections() {
@@ -123,6 +173,7 @@ void accept_connections() {
         thread_entry_t *current_entry = NULL;
         SLIST_FOREACH(current_entry, &thread_manager, entries) {
             if (current_entry->is_complete) {
+                // join thread for completed threads
                 pthread_join(current_entry->thread_id, NULL);
             }
         }
@@ -176,6 +227,7 @@ void *client_handler(void *arg) {
                 syslog(LOG_DEBUG, "Packet complete. Data: %s", write_buffer);
 
                 // lock mutex
+                syslog(LOG_DEBUG, "Locking tmpdata mutex.");
                 pthread_mutex_lock(&file_mutex);
 
                 // reset write buffer and write to file
@@ -184,6 +236,7 @@ void *client_handler(void *arg) {
                 write(tmpdata_client_fd, "\n", 1);
 
                 // unlock mutex
+                syslog(LOG_DEBUG, "Unlocking manager mutex.");
                 pthread_mutex_unlock(&file_mutex);
 
                 // reset write buffer
@@ -265,8 +318,10 @@ int thread_entry_add(thread_entry_t *entry) {
     }
 
     // add the thread entry
+    syslog(LOG_DEBUG, "Locking manager mutex.");
     pthread_mutex_lock(&manager_mutex);
     SLIST_INSERT_HEAD(&thread_manager, entry, entries);
+    syslog(LOG_DEBUG, "Unlocking manager mutex.");
     pthread_mutex_unlock(&manager_mutex);
 
     // return 
@@ -278,6 +333,7 @@ int thread_entry_remove(pthread_t thread_id) {
     thread_entry_t *current_entry = NULL;
 
     // lock the manager
+    syslog(LOG_DEBUG, "Locking manager mutex.");
     pthread_mutex_lock(&manager_mutex);
     SLIST_FOREACH(current_entry, &thread_manager, entries) {
         if (current_entry->thread_id == thread_id) {
@@ -288,12 +344,14 @@ int thread_entry_remove(pthread_t thread_id) {
             thread_entry_free(current_entry);
 
             // unlock mutex before returning
+            syslog(LOG_DEBUG, "Unlocking manager mutex.");
             pthread_mutex_unlock(&manager_mutex);
 
             // return
             return 0;
         }
     }
+    syslog(LOG_DEBUG, "Unlocking manager mutex.");
     pthread_mutex_unlock(&manager_mutex);
 
     // no thread_ids matched
@@ -305,6 +363,7 @@ int thread_entry_markcomplete(pthread_t thread_id) {
     thread_entry_t *current_entry = NULL;
 
     // lock the manager
+    syslog(LOG_DEBUG, "Locking manager mutex.");
     pthread_mutex_lock(&manager_mutex);
     SLIST_FOREACH(current_entry, &thread_manager, entries) {
         if (current_entry->thread_id == thread_id) {
@@ -312,12 +371,14 @@ int thread_entry_markcomplete(pthread_t thread_id) {
             current_entry->is_complete = true;
 
             // unlock mutex before returning
+            syslog(LOG_DEBUG, "Unlocking manager mutex.");
             pthread_mutex_unlock(&manager_mutex);
 
             // return
             return 0;
         }
     }
+    syslog(LOG_DEBUG, "Unlocking manager mutex.");
     pthread_mutex_unlock(&manager_mutex);
 
     // no thread_ids matched
@@ -351,10 +412,12 @@ void thread_entry_printall() {
     syslog(LOG_DEBUG, "===> THREAD MANAGER HEAD\n");
 
     // lock the manager
+    syslog(LOG_DEBUG, "Locking manager mutex.");
     pthread_mutex_lock(&manager_mutex);
     SLIST_FOREACH(current_entry, &thread_manager, entries) {
         thread_entry_print(current_entry);
     }
+    syslog(LOG_DEBUG, "Unlocking manager mutex.");
     pthread_mutex_unlock(&manager_mutex);
 
     // print footer
@@ -362,23 +425,58 @@ void thread_entry_printall() {
 }
 
 /**************************************************************************************************
+ * FUNCTIONS - TIMESTAMP HANDLER
+ **************************************************************************************************/
+void append_timestamp()
+{
+    // open file
+    int timestamp_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    if (timestamp_fd == -1) {
+        return;
+    }
+
+    // set up variables
+    char timestamp_buffer[64];
+    struct tm *tm_info;
+    time_t current_time;
+
+    // retrieve current time and turn it into RFC 2822 formatted timestamp
+    time(&current_time);
+    tm_info = localtime(&current_time);
+    strftime(timestamp_buffer, sizeof(timestamp_buffer), "timestamp:%a, %d %b %Y %H:%M:%S %z\n", tm_info);
+
+    // write to file
+    syslog(LOG_DEBUG, "Locking tmpdata mutex.");
+    pthread_mutex_lock(&file_mutex);
+    write(timestamp_fd, timestamp_buffer, strlen(timestamp_buffer));
+    syslog(LOG_DEBUG, "Unlocking tmpdata mutex.");
+    pthread_mutex_unlock(&file_mutex);
+}
+
+/**************************************************************************************************
  * FUNCTIONS - SIGNAL HANDLER
  **************************************************************************************************/
-void signal_handler() {
-    // log signal handler, using re-entrant write() instead of a normal printf/log
-    syslog(LOG_INFO, "Caught signal, exiting");
+void signal_handler(int sig) {
+    if(sig == SIGALRM)
+    {
+        syslog(LOG_INFO, "SIGALRM; writing timestamp to file.");
+        append_timestamp();
+    } else {
+        // log signal handler, using re-entrant write() instead of a normal printf/log
+        syslog(LOG_INFO, "Caught signal, exiting");
 
-    // attempt to close files
-    close(server_socket_fd);
+        // attempt to close files
+        close(server_socket_fd);
 
-    // attempt to free addrinfo struct
-    freeaddrinfo(server_address_info);
-    
-    // delete file
-    remove(TMPDATA_PATH);
+        // attempt to free addrinfo struct
+        freeaddrinfo(server_address_info);
+        
+        // delete file
+        remove(TMPDATA_PATH);
 
-    // exit
-    exit(1);
+        // exit
+        exit(1);
+    }
 }
 
 /**************************************************************************************************
