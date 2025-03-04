@@ -12,6 +12,7 @@
 #include <fcntl.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <errno.h>
 
 // include network libraries
 #include <sys/types.h>
@@ -46,8 +47,6 @@ pthread_mutex_t file_mutex = PTHREAD_MUTEX_INITIALIZER;
 
 // timestamps
 timer_t timer_id;
-struct sigevent timer_sig_event;
-struct itimerspec timer_spec;
 
 // signal actions
 struct sigaction sigact;
@@ -67,11 +66,11 @@ void initialize_server();
 /**
  * initialize_timer()
  * 
- * Creates a timer that will write to a file on an interval, triggered on SIGALRM
+ * Initializes timer for SIGALRM
  * 
- * @return 0 on success, -1 on failure
+ * @return none
  */
-int initialize_timer();
+void initialize_timer();
 
 /**
  * accept_connections()
@@ -88,6 +87,15 @@ void accept_connections();
  * Threading function to handle a client connection
  */
 void *client_handler(void *arg);
+
+/**
+ * append_timestamp
+ * 
+ * Writes timestamp to a file
+ * 
+ * @return none
+ */
+void append_timestamp();
 
 /**
  * signal_handler()

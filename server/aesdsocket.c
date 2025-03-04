@@ -4,18 +4,8 @@
  * MAIN
  **************************************************************************************************/
 int main(int argc, char *argv[]) {
-    // open syslog
-    openlog(NULL, LOG_PID | LOG_CONS | LOG_NDELAY, LOG_USER);
-
     // return values for functions
     int rc = 0;
-
-    // initialize timer for timestamps
-    rc = initialize_timer();
-    if (rc != 0) {
-        syslog(LOG_ERR, "Error configuring timer.");
-        return -1;
-    }
 
     // initialize server functions
     initialize_server();
@@ -44,7 +34,7 @@ int main(int argc, char *argv[]) {
 
     // set up bind options for better debugging
     int optval = 1;
-    setsockopt(server_socket_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+    setsockopt(server_socket_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &optval, sizeof(optval));
 
     // bind name to socket
     syslog(LOG_INFO, "Binding server socket.");
@@ -59,24 +49,27 @@ int main(int argc, char *argv[]) {
     // start daemon if -d flag was passed
     start_daemon(argc, argv);
 
+    // start timer
+    initialize_timer();
+
     // accept connections - main program loop
     accept_connections();
 
 // cleanup labels; makes it easier to read code and keep track of frees/closes
 exit_socket_listen:
-    if (rc == -1) syslog(LOG_ERR, "Exiting socket listen.");
+    if (rc == -1) syslog(LOG_ERR, "Exiting socket listen. (errno %d)", errno);
 exit_socket_bind:
-    if (rc == -1) syslog(LOG_ERR, "Exiting socket bind.");
+    if (rc == -1) syslog(LOG_ERR, "Exiting socket bind. (errno %d)", errno);
     close(server_socket_fd);
 exit_socket_creation:
-    if (rc == -1) syslog(LOG_ERR, "Exiting socket creation."); 
+    if (rc == -1) syslog(LOG_ERR, "Exiting socket creation. (errno %d)", errno); 
 exit_free_addrinfo_struct:
     freeaddrinfo(server_address_info);
 
+    // server cleanup
+
     // return
-    remove(TMPDATA_PATH);
-    closelog();
-    return rc;
+    return 0;
 }
 
 
@@ -84,6 +77,44 @@ exit_free_addrinfo_struct:
  * FUNCTION DEFINITIONS - SERVER
  **************************************************************************************************/
 void initialize_server() {
+    // open syslog
+    openlog(NULL, LOG_PID | LOG_CONS | LOG_NDELAY, LOG_USER);
+
+    // initialize thread manager
+    SLIST_INIT(&thread_manager);
+
+    // return
+    return;
+}
+
+void initialize_timer() {
+    // create the signal event for the interval timer
+    struct sigevent timer_sig_event;
+    memset(&timer_sig_event, 0, sizeof(timer_sig_event));
+    timer_sig_event.sigev_notify = SIGEV_SIGNAL;
+    timer_sig_event.sigev_signo = SIGALRM;
+    timer_sig_event.sigev_value.sival_ptr = &timer_id;
+
+    if (timer_create(CLOCK_REALTIME, &timer_sig_event, &timer_id) == -1) {
+        syslog(LOG_ERR, "Creating timer failed");
+        return;
+    }
+
+    // configure the timer's interval value
+    struct itimerspec timer_spec;
+    timer_spec.it_value.tv_sec = TIMER_FREQ_S;
+    timer_spec.it_value.tv_nsec = 0;
+    timer_spec.it_interval.tv_sec = TIMER_FREQ_S;
+    timer_spec.it_interval.tv_nsec = 0;
+
+    if (timer_settime(timer_id, 0, &timer_spec, NULL) == -1) {
+        syslog(LOG_ERR, "Setting timer failed");
+        return;
+    }
+
+    // success; return
+    syslog(LOG_INFO, "Timer set successfully.");
+    
     // set up signal handler
     // https://stackoverflow.com/questions/2485028/signal-handling-in-c
     // https://pubs.opengroup.org/onlinepubs/009695399/functions/sigaction.html
@@ -93,43 +124,23 @@ void initialize_server() {
     sigaction(SIGALRM, &sigact, (struct sigaction *)NULL);
     sigaction(SIGINT, &sigact, (struct sigaction *)NULL);
     sigaction(SIGTERM, &sigact, (struct sigaction *)NULL);
-
-    // initialize thread manager
-    SLIST_INIT(&thread_manager);
 }
 
-int initialize_timer()
-{
-    // return code
-    int rc = 0;
+void cleanup_server() {
+    // clean thread manager
+    thread_entry_freeall();
 
-    // create the signal event for the interval timer
-    memset(&timer_sig_event, 0, sizeof(timer_sig_event));
-    timer_sig_event.sigev_notify = SIGEV_SIGNAL;
-    timer_sig_event.sigev_signo = SIGALRM;
-    timer_sig_event.sigev_value.sival_ptr = &timer_id;
+    // attempt to close files
+    close(server_socket_fd);
 
-    rc = timer_create(CLOCK_REALTIME, &timer_sig_event, &timer_id);
-    if (rc == -1) {
-        syslog(LOG_ERR, "Creating timer failed");
-        return rc;
-    }
+    // attempt to free addrinfo struct
+    freeaddrinfo(server_address_info);
 
-    // configure the timer's interval value
-    timer_spec.it_value.tv_sec = TIMER_FREQ_S;
-    timer_spec.it_value.tv_nsec = 0;
-    timer_spec.it_interval.tv_sec = TIMER_FREQ_S;
-    timer_spec.it_interval.tv_nsec = 0;
+    // remove tmpdata file
+    remove(TMPDATA_PATH);
 
-    rc = timer_settime(timer_id, 0, &timer_spec, NULL);
-    if (rc == -1) {
-        syslog(LOG_ERR, "Setting timer failed");
-        return rc;
-    }
-
-    // success; return
-    syslog(LOG_INFO, "Timer set successfully.");
-    return 0;
+    // close syslog
+    closelog();
 }
 
 void accept_connections() {
@@ -143,7 +154,7 @@ void accept_connections() {
         syslog(LOG_INFO, "Accepting socket connection.");
         int client_fd = accept(server_socket_fd, (struct sockaddr *)&client_address_info, &client_address_len);
         if (client_fd == -1) {
-            syslog(LOG_ERR, "accept() failed.");
+            syslog(LOG_ERR, "accept() failed. (errno %d)", errno);
             continue;
         }
 
@@ -164,10 +175,11 @@ void accept_connections() {
             close(client_fd);
             thread_entry_free(new_connection);
             continue;
+        } else {
+            // add thread to thread manager
+            thread_entry_add(new_connection);
         }
 
-        // add thread to thread manager
-        thread_entry_add(new_connection);
 
         // check if any of the current threads need to be joined
         thread_entry_t *current_entry = NULL;
@@ -393,6 +405,9 @@ void thread_entry_freeall() {
         // get head of thread manager
         current_entry = SLIST_FIRST(&thread_manager);
 
+        // join thread
+        pthread_join(current_entry->thread_id, NULL);
+
         // remove this from thread manager
         thread_entry_remove(current_entry->thread_id);
     }
@@ -429,12 +444,6 @@ void thread_entry_printall() {
  **************************************************************************************************/
 void append_timestamp()
 {
-    // open file
-    int timestamp_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
-    if (timestamp_fd == -1) {
-        return;
-    }
-
     // set up variables
     char timestamp_buffer[64];
     struct tm *tm_info;
@@ -445,12 +454,22 @@ void append_timestamp()
     tm_info = localtime(&current_time);
     strftime(timestamp_buffer, sizeof(timestamp_buffer), "timestamp:%a, %d %b %Y %H:%M:%S %z\n", tm_info);
 
+    // open file
+    int timestamp_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    if (timestamp_fd == -1) {
+        syslog(LOG_ERR, "[TIMER] Error opening timestamp file. (errno %d)", errno);
+        return;
+    }
+
     // write to file
     syslog(LOG_DEBUG, "Locking tmpdata mutex.");
     pthread_mutex_lock(&file_mutex);
     write(timestamp_fd, timestamp_buffer, strlen(timestamp_buffer));
     syslog(LOG_DEBUG, "Unlocking tmpdata mutex.");
     pthread_mutex_unlock(&file_mutex);
+
+    // close file
+    close(timestamp_fd);
 }
 
 /**************************************************************************************************
@@ -459,20 +478,14 @@ void append_timestamp()
 void signal_handler(int sig) {
     if(sig == SIGALRM)
     {
-        syslog(LOG_INFO, "SIGALRM; writing timestamp to file.");
+        syslog(LOG_INFO, "[TIMER] SIGALRM received, writing to file.");
         append_timestamp();
     } else {
         // log signal handler, using re-entrant write() instead of a normal printf/log
         syslog(LOG_INFO, "Caught signal, exiting");
 
-        // attempt to close files
-        close(server_socket_fd);
-
-        // attempt to free addrinfo struct
-        freeaddrinfo(server_address_info);
-        
-        // delete file
-        remove(TMPDATA_PATH);
+        // cleanup
+        cleanup_server();
 
         // exit
         exit(1);
@@ -502,18 +515,38 @@ void start_daemon(int argc, char **argv) {
     // https://stackoverflow.com/questions/17078947/daemon-socket-server-in-c
     // read the above post for classic steps on making a daemon from an executed process
     if (is_daemon) {
-        // change to root
-        chdir("/");
+        // indicate we are in daemon mode
+        syslog(LOG_INFO, "[DAEMON] Starting daemon...");
 
-        // exit if parent process
-        if (fork() > 0) _exit(0);
+        // create first child (child A)
+        pid_t pid;
+        if ((pid = fork()) < 0) {
+            // error creating child process
+            syslog(LOG_ERR, "[DAEMON] Creating first child process fails.");
+            cleanup_server();
+            exit(1);
+        } else if (pid != 0) {
+            // this is the parent process; exit
+            exit(0);
+        }
 
-        // redirect standard outputs to /dev/null
-        close(0);
-        close(1);
-        close(2);
-        open("/dev/null", O_RDWR);
-        dup(0);
-        dup(0);
+        // change child A to be session leader
+        setsid();
+
+        // create second child (child B)
+        if ((pid = fork()) < 0) {
+            // error creating child process
+            syslog(LOG_ERR, "[DAEMON] Creating second child process fails.");
+            cleanup_server();
+            exit(1);
+        } else if (pid != 0) {
+            // this is child A; exit
+            exit(0);
+        }
+
+        // child B returns to original program
+        return;
+    } else {
+        syslog(LOG_INFO, "[DAEMON] Starting in normal mode.");
     }
 }
