@@ -10,3 +10,5 @@ aesdsocket
 server/aesdsocket
 server/valgrind-out.txt
 actions-runner/
+server/oe-logs
+server/oe-workdir

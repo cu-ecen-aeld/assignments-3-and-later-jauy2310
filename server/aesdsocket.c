@@ -244,8 +244,14 @@ void *client_handler(void *arg) {
 
                 // reset write buffer and write to file
                 lseek(tmpdata_client_fd, 0, SEEK_END);
-                write(tmpdata_client_fd, write_buffer, write_buffer_index);
-                write(tmpdata_client_fd, "\n", 1);
+                if (write(tmpdata_client_fd, write_buffer, write_buffer_index) == -1) {
+                    syslog(LOG_ERR, "Error writing buffer to client.");
+                    continue;
+                }
+                if (write(tmpdata_client_fd, "\n", 1) == -1) {
+                    syslog(LOG_ERR, "Error writing newline to client.");
+                    continue;
+                }
 
                 // unlock mutex
                 syslog(LOG_DEBUG, "Unlocking manager mutex.");
@@ -464,7 +470,9 @@ void append_timestamp()
     // write to file
     syslog(LOG_DEBUG, "Locking tmpdata mutex.");
     pthread_mutex_lock(&file_mutex);
-    write(timestamp_fd, timestamp_buffer, strlen(timestamp_buffer));
+    if (write(timestamp_fd, timestamp_buffer, strlen(timestamp_buffer)) == -1) {
+        syslog(LOG_ERR, "Error writing timestamp to file.");
+    }
     syslog(LOG_DEBUG, "Unlocking tmpdata mutex.");
     pthread_mutex_unlock(&file_mutex);
 
