@@ -1,7 +1,7 @@
 CC ?= $(CROSS_COMPILE)gcc
 CFLAGS ?= -g -Wall -Werror
 TARGET ?= aesdsocket
-LDFLAGS ?= -lpthread -lrt -Wl --hash-style=gnu
+LDFLAGS ?= -lpthread -lrt
 
 all: aesdsocket
 
