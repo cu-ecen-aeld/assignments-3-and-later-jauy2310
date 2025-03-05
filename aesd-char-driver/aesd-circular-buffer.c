@@ -44,9 +44,34 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    /**
-    * TODO: implement per description
-    */
+    // guard clause to check for valid arguments
+    if (buffer == NULL || add_entry == NULL) {
+        return;
+    }
+
+    // check if the buffer is full and free the buffer in the oldest entry
+    if (buffer->full && (buffer->entry[buffer->in_offs].buffptr != NULL)) {
+        // this needs to free a void pointer, as the original field has a const qualifier
+        free((void *)buffer->entry[buffer->in_offs].buffptr); 
+        buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
+
+    // re-allocate memory for the place in memory the new entry should go
+    char *new_buff = (char *)malloc(sizeof(char) * add_entry->size);
+    if (new_buff == NULL) {
+        return;
+    }
+    memcpy(new_buff, add_entry->buffptr, add_entry->size);
+
+    // fill in new entry data
+    buffer->entry[buffer->in_offs].buffptr = new_buff;
+    buffer->entry[buffer->in_offs].size = add_entry->size;
+
+    // increment buffer index, wrapping around if full
+    buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    // check if the buffer is full
+    buffer->full = (buffer->in_offs == buffer->out_offs);
 }
 
 /**
