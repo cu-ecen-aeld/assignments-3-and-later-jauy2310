@@ -1,13 +1,15 @@
-CC:=$(CROSS_COMPILE)gcc
-CFLAGS+=-g -Wall -Werror
+CC ?= $(CROSS_COMPILE)gcc
+CFLAGS ?= -g -Wall -Werror
+TARGET ?= aesdsocket
+LDFLAGS ?= -lpthread -lrt -Wl --hash-style=gnu
 
 all: aesdsocket
 
-aesdsocket: aesdsocket.o
-	$(CC) aesdsocket.o -o aesdsocket $(CFLAGS)
+${TARGET}: ${TARGET}.o
+	$(CC) ${TARGET}.o -o ${TARGET} $(CFLAGS) ${LDFLAGS}
 
-aesdsocket.o: aesdsocket.c aesdsocket.h
-	$(CC) -c aesdsocket.c -o aesdsocket.o $(CFLAGS)
+${TARGET}.o: ${TARGET}.c ${TARGET}.h
+	$(CC) -c ${TARGET}.c -o ${TARGET}.o $(CFLAGS) ${LDFLAGS}
 
 clean:
-	rm -f *.o aesdsocket
+	rm -f *.o ${TARGET}
