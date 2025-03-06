@@ -1,15 +1,14 @@
 #include "aesdsocket.h"
 
+/**************************************************************************************************
+ * MAIN
+ **************************************************************************************************/
 int main(int argc, char *argv[]) {
-    // open syslog
-    openlog(NULL, LOG_PID | LOG_CONS | LOG_NDELAY, LOG_USER);
-
-    // signal handler
-    signal(SIGINT, signal_handler);
-    signal(SIGTERM, signal_handler);
-
     // return values for functions
     int rc = 0;
+
+    // initialize server functions
+    initialize_server();
 
     // getaddrinfo setup - hints
     syslog(LOG_INFO, "Retrieving server address info.");
@@ -35,7 +34,7 @@ int main(int argc, char *argv[]) {
 
     // set up bind options for better debugging
     int optval = 1;
-    setsockopt(server_socket_fd, SOL_SOCKET, SO_REUSEADDR, &optval, sizeof(optval));
+    setsockopt(server_socket_fd, SOL_SOCKET, SO_REUSEADDR | SO_REUSEPORT, &optval, sizeof(optval));
 
     // bind name to socket
     syslog(LOG_INFO, "Binding server socket.");
@@ -47,116 +46,463 @@ int main(int argc, char *argv[]) {
     rc = listen(server_socket_fd, NUM_CONNECTIONS);
     if (rc == -1) goto exit_socket_listen;
 
-    // set aside client variables accessible outside of loop (for cleanup)
-    struct sockaddr client_address_info;
-    socklen_t client_address_len = sizeof(client_address_info);
-    char client_ip[INET_ADDRSTRLEN];
-
     // start daemon if -d flag was passed
     start_daemon(argc, argv);
 
-    // main loop; keep accepting/closing connections 
+    // start timer
+    initialize_timer();
+
+    // accept connections - main program loop
+    accept_connections();
+
+// cleanup labels; makes it easier to read code and keep track of frees/closes
+exit_socket_listen:
+    if (rc == -1) syslog(LOG_ERR, "Exiting socket listen. (errno %d)", errno);
+exit_socket_bind:
+    if (rc == -1) syslog(LOG_ERR, "Exiting socket bind. (errno %d)", errno);
+    close(server_socket_fd);
+exit_socket_creation:
+    if (rc == -1) syslog(LOG_ERR, "Exiting socket creation. (errno %d)", errno); 
+exit_free_addrinfo_struct:
+    freeaddrinfo(server_address_info);
+
+    // server cleanup
+
+    // return
+    return 0;
+}
+
+
+/**************************************************************************************************
+ * FUNCTION DEFINITIONS - SERVER
+ **************************************************************************************************/
+void initialize_server() {
+    // open syslog
+    openlog(NULL, LOG_PID | LOG_CONS | LOG_NDELAY, LOG_USER);
+
+    // initialize thread manager
+    SLIST_INIT(&thread_manager);
+
+    // return
+    return;
+}
+
+void initialize_timer() {
+    // create the signal event for the interval timer
+    struct sigevent timer_sig_event;
+    memset(&timer_sig_event, 0, sizeof(timer_sig_event));
+    timer_sig_event.sigev_notify = SIGEV_SIGNAL;
+    timer_sig_event.sigev_signo = SIGALRM;
+    timer_sig_event.sigev_value.sival_ptr = &timer_id;
+
+    if (timer_create(CLOCK_REALTIME, &timer_sig_event, &timer_id) == -1) {
+        syslog(LOG_ERR, "Creating timer failed");
+        return;
+    }
+
+    // configure the timer's interval value
+    struct itimerspec timer_spec;
+    timer_spec.it_value.tv_sec = TIMER_FREQ_S;
+    timer_spec.it_value.tv_nsec = 0;
+    timer_spec.it_interval.tv_sec = TIMER_FREQ_S;
+    timer_spec.it_interval.tv_nsec = 0;
+
+    if (timer_settime(timer_id, 0, &timer_spec, NULL) == -1) {
+        syslog(LOG_ERR, "Setting timer failed");
+        return;
+    }
+
+    // success; return
+    syslog(LOG_INFO, "Timer set successfully.");
+    
+    // set up signal handler
+    // https://stackoverflow.com/questions/2485028/signal-handling-in-c
+    // https://pubs.opengroup.org/onlinepubs/009695399/functions/sigaction.html
+    sigact.sa_handler = signal_handler;
+    sigemptyset(&sigact.sa_mask);
+    sigact.sa_flags = 0;
+    sigaction(SIGALRM, &sigact, (struct sigaction *)NULL);
+    sigaction(SIGINT, &sigact, (struct sigaction *)NULL);
+    sigaction(SIGTERM, &sigact, (struct sigaction *)NULL);
+}
+
+void cleanup_server() {
+    // clean thread manager
+    thread_entry_freeall();
+
+    // attempt to close files
+    close(server_socket_fd);
+
+    // attempt to free addrinfo struct
+    freeaddrinfo(server_address_info);
+
+    // remove tmpdata file
+    remove(TMPDATA_PATH);
+
+    // close syslog
+    closelog();
+}
+
+void accept_connections() {
     while (1) {
+        // create client address info
+        struct sockaddr client_address_info;
+        socklen_t client_address_len = sizeof(client_address_info);
+        char client_ip[INET_ADDRSTRLEN];
+
         // create client address info struct
         syslog(LOG_INFO, "Accepting socket connection.");
-        rc = accept(server_socket_fd, (struct sockaddr *)&client_address_info, &client_address_len);
-        if (rc == -1) goto exit_socket_accept;
-        client_fd = rc;
+        int client_fd = accept(server_socket_fd, (struct sockaddr *)&client_address_info, &client_address_len);
+        if (client_fd == -1) {
+            syslog(LOG_ERR, "accept() failed. (errno %d)", errno);
+            continue;
+        }
 
         // log client connection
         struct sockaddr_in *client = (struct sockaddr_in *)&client_address_info;
         inet_ntop(client->sin_family, &client->sin_addr, client_ip, sizeof(client_ip));
         syslog(LOG_INFO, "Accepted connection from %s", client_ip);
 
-        // open file to write
-        tmpdata_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
-        if (tmpdata_fd == -1) goto retry;
-
-        // read_buffer to store incoming data
-        char read_buffer[BUFFER_SIZE] = {0};
-
-        // write buffer to store outgoing data
-        char write_buffer[BUFFER_SIZE] = {0};
-        int write_buffer_index = 0;
-
-        // infinite loop to process incoming data while connection is open
-        while (1) {
-            // receive data from socket
-            ssize_t bytes_received = recv(client_fd, read_buffer, BUFFER_SIZE, 0);
-
-            // client connection closed
-            if (bytes_received <= 0) break;
-
-            // for loop to process a single sub-buffer
-            for (int i = 0; i < bytes_received; i++) {
-                if (read_buffer[i] == '\n') {
-                    // packet completed; send to file
-                    syslog(LOG_DEBUG, "Packet complete. Data: %s", write_buffer);
-
-                    // reset write buffer and write to file
-                    lseek(tmpdata_fd, 0, SEEK_END);
-                    write(tmpdata_fd, write_buffer, write_buffer_index);
-                    write(tmpdata_fd, "\n", 1);
-                    memset(write_buffer, 0, BUFFER_SIZE);
-                    write_buffer_index = 0;
-
-                    // packet was received; send entire contents of file to client
-                    lseek(tmpdata_fd, 0, SEEK_SET);
-                    char file_content[BUFFER_SIZE];
-                    size_t bytes_read;
-                    while ((bytes_read = read(tmpdata_fd, file_content, sizeof(file_content))) > 0) {
-                        send(client_fd, file_content, bytes_read, 0);
-                    }
-                } else {
-                    write_buffer[write_buffer_index++] = read_buffer[i];
-                }
-            }
+        // create a new entry
+        thread_entry_t *new_connection = thread_entry_create(0, client_ip, client_fd);
+        if (new_connection == NULL) {
+            syslog(LOG_ERR, "Error malloc'ing memory for new thread entry");
+            continue;
         }
 
-retry:
-        syslog(LOG_INFO, "Closed connection from %s", client_ip);
+        // create a new pthread
+        if (pthread_create(&new_connection->thread_id, NULL, client_handler, new_connection) != 0 ) {
+            close(client_fd);
+            thread_entry_free(new_connection);
+            continue;
+        } else {
+            // add thread to thread manager
+            thread_entry_add(new_connection);
+        }
+
+
+        // check if any of the current threads need to be joined
+        thread_entry_t *current_entry = NULL;
+        SLIST_FOREACH(current_entry, &thread_manager, entries) {
+            if (current_entry->is_complete) {
+                // join thread for completed threads
+                pthread_join(current_entry->thread_id, NULL);
+            }
+        }
+    }
+}
+
+void *client_handler(void *arg) {
+    // define the client fd
+    thread_entry_t *connection = (thread_entry_t *)arg;
+    pthread_t thread_id = connection->thread_id;
+    int client_fd = connection->client_fd;
+
+    // print
+    syslog(LOG_DEBUG, "New connection:");
+    thread_entry_print(connection);
+    
+    // open file to write
+    int tmpdata_client_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
+    if (tmpdata_client_fd == -1) {
+        syslog(LOG_ERR, "Failed to open %s", TMPDATA_PATH);
         close(client_fd);
-        close(tmpdata_fd);
+        return NULL;
     }
 
-// cleanup labels; makes it easier to read code and keep track of frees/closes
-exit_socket_accept:
-    if (rc == -1) syslog(LOG_ERR, "Exiting socket accept.");
-exit_socket_listen:
-    if (rc == -1) syslog(LOG_ERR, "Exiting socket listen.");
-exit_socket_bind:
-    if (rc == -1) syslog(LOG_ERR, "Exiting socket bind.");
-    close(server_socket_fd);
-exit_socket_creation:
-    if (rc == -1) syslog(LOG_ERR, "Exiting socket creation."); 
-exit_free_addrinfo_struct:
-    freeaddrinfo(server_address_info);
+    // read_buffer to store incoming data
+    char read_buffer[BUFFER_SIZE] = {0};
+
+    // write buffer to store outgoing data
+    char write_buffer[BUFFER_SIZE] = {0};
+    int write_buffer_index = 0;
+
+    // infinite loop to process incoming data while connection is open
+    while (1) {
+        // receive data from socket
+        ssize_t bytes_received = recv(client_fd, read_buffer, BUFFER_SIZE, 0);
+
+        // client connection closed
+        if (bytes_received <= 0) {
+            if (connection->client_ip != NULL) {
+                syslog(LOG_INFO, "Closed client connection from %s.", (char *)connection->client_ip);
+            } else {
+                syslog(LOG_INFO, "Closed client connection from unknown.");
+            }
+            break;
+        }
+
+        // for loop to process a single sub-buffer
+        for (int i = 0; i < bytes_received; i++) {
+            if (read_buffer[i] == '\n') {
+                // packet completed; send to file
+                syslog(LOG_DEBUG, "Packet complete. Data: %s", write_buffer);
+
+                // lock mutex
+                syslog(LOG_DEBUG, "Locking tmpdata mutex.");
+                pthread_mutex_lock(&file_mutex);
+
+                // reset write buffer and write to file
+                lseek(tmpdata_client_fd, 0, SEEK_END);
+                if (write(tmpdata_client_fd, write_buffer, write_buffer_index) == -1) {
+                    syslog(LOG_ERR, "Error writing buffer to client.");
+                    continue;
+                }
+                if (write(tmpdata_client_fd, "\n", 1) == -1) {
+                    syslog(LOG_ERR, "Error writing newline to client.");
+                    continue;
+                }
+
+                // unlock mutex
+                syslog(LOG_DEBUG, "Unlocking manager mutex.");
+                pthread_mutex_unlock(&file_mutex);
+
+                // reset write buffer
+                memset(write_buffer, 0, BUFFER_SIZE);
+                write_buffer_index = 0;
+
+                // packet was received; send entire contents of file to client
+                lseek(tmpdata_client_fd, 0, SEEK_SET);
+                char file_content[BUFFER_SIZE];
+                size_t bytes_read;
+                while ((bytes_read = read(tmpdata_client_fd, file_content, sizeof(file_content))) > 0) {
+                    send(client_fd, file_content, bytes_read, 0);
+                }
+            } else {
+                write_buffer[write_buffer_index++] = read_buffer[i];
+            }
+        }
+    }
+
+    // mark thread as complete
+    thread_entry_markcomplete(thread_id);
+
+    // cleanup
+    close(tmpdata_client_fd);
+    close(client_fd);
+    return NULL;
+}
+
+/**************************************************************************************************
+ * THREAD MANAGER - Tracks threads for entire application
+ **************************************************************************************************/
+thread_entry_t *thread_entry_create(pthread_t new_thread_id, const char *new_client_ip, int new_client_fd) {
+    // allocate memory
+    thread_entry_t *new_thread_entry = (thread_entry_t *)malloc(sizeof(thread_entry_t));
+    if (!new_thread_entry) {
+        syslog(LOG_ERR, "Error malloc'ing thread_entry");
+        return NULL;
+    }
+
+    // assign fields to new thread entry
+    new_thread_entry->thread_id = new_thread_id;
+    new_thread_entry->client_ip = strdup(new_client_ip);
+    if (!new_thread_entry->client_ip) {
+        syslog(LOG_ERR, "Error malloc'ing thread_entry->client_ip");
+        free(new_thread_entry);
+        return NULL;
+    }
+    new_thread_entry->client_fd = new_client_fd;
+    new_thread_entry->is_complete = false;
 
     // return
-    remove(TMPDATA_PATH);
-    closelog();
-    return rc;
+    return new_thread_entry;
 }
 
-void signal_handler() {
-    // log signal handler, using re-entrant write() instead of a normal printf/log
-    syslog(LOG_INFO, "Caught signal, exiting");
+int thread_entry_free(thread_entry_t *entry) {
+    // check if entry is already null
+    if (!entry) {
+        syslog(LOG_ERR, "Thread being free'd is already NULL");
+        return -1;
+    }
 
-    // attempt to close files
-    close(tmpdata_fd);
-    close(client_fd);
-    close(server_socket_fd);
+    // free string in struct
+    if (entry->client_ip != NULL) {
+        free(entry->client_ip);
+    }
 
-    // attempt to free addrinfo struct
-    freeaddrinfo(server_address_info);
-    
-    // delete file
-    remove(TMPDATA_PATH);
+    // free struct malloc
+    free(entry);
 
-    // exit
-    exit(1);
+    // return success
+    return 0;
 }
 
+int thread_entry_add(thread_entry_t *entry) {
+    // check if entry is valid
+    if (!entry) {
+        syslog(LOG_ERR, "Thread entry to add is NULL");
+        return -1;
+    }
+
+    // add the thread entry
+    syslog(LOG_DEBUG, "Locking manager mutex.");
+    pthread_mutex_lock(&manager_mutex);
+    SLIST_INSERT_HEAD(&thread_manager, entry, entries);
+    syslog(LOG_DEBUG, "Unlocking manager mutex.");
+    pthread_mutex_unlock(&manager_mutex);
+
+    // return 
+    return 0;
+}
+
+int thread_entry_remove(pthread_t thread_id) {
+    // malloc a current node to use for checking
+    thread_entry_t *current_entry = NULL;
+
+    // lock the manager
+    syslog(LOG_DEBUG, "Locking manager mutex.");
+    pthread_mutex_lock(&manager_mutex);
+    SLIST_FOREACH(current_entry, &thread_manager, entries) {
+        if (current_entry->thread_id == thread_id) {
+            // remove entry from list
+            SLIST_REMOVE(&thread_manager, current_entry, thread_entry_t, entries);
+
+            // free the removed struct
+            thread_entry_free(current_entry);
+
+            // unlock mutex before returning
+            syslog(LOG_DEBUG, "Unlocking manager mutex.");
+            pthread_mutex_unlock(&manager_mutex);
+
+            // return
+            return 0;
+        }
+    }
+    syslog(LOG_DEBUG, "Unlocking manager mutex.");
+    pthread_mutex_unlock(&manager_mutex);
+
+    // no thread_ids matched
+    return -1;
+}
+
+int thread_entry_markcomplete(pthread_t thread_id) {
+    // malloc a current node to use for checking
+    thread_entry_t *current_entry = NULL;
+
+    // lock the manager
+    syslog(LOG_DEBUG, "Locking manager mutex.");
+    pthread_mutex_lock(&manager_mutex);
+    SLIST_FOREACH(current_entry, &thread_manager, entries) {
+        if (current_entry->thread_id == thread_id) {
+            // set the is_complete field for this thread to true
+            current_entry->is_complete = true;
+
+            // unlock mutex before returning
+            syslog(LOG_DEBUG, "Unlocking manager mutex.");
+            pthread_mutex_unlock(&manager_mutex);
+
+            // return
+            return 0;
+        }
+    }
+    syslog(LOG_DEBUG, "Unlocking manager mutex.");
+    pthread_mutex_unlock(&manager_mutex);
+
+    // no thread_ids matched
+    return -1;
+}
+
+void thread_entry_freeall() {
+    // create a current node to use for checking
+    thread_entry_t *current_entry = NULL;
+
+    while(!(SLIST_EMPTY(&thread_manager))) {
+        // get head of thread manager
+        current_entry = SLIST_FIRST(&thread_manager);
+
+        // join thread
+        pthread_join(current_entry->thread_id, NULL);
+
+        // remove this from thread manager
+        thread_entry_remove(current_entry->thread_id);
+    }
+}
+
+void thread_entry_print(thread_entry_t *current_entry) {
+    // print info
+    syslog(LOG_DEBUG, "Thread ID: %d | Client IP: %s | Client FD: %d | Completion Status: %s\n",
+        (int)current_entry->thread_id, current_entry->client_ip, current_entry->client_fd, current_entry->is_complete ? "Yes" : "No");
+}
+
+void thread_entry_printall() {
+    // create a current node to use for checking
+    thread_entry_t *current_entry = NULL;
+
+    // print header
+    syslog(LOG_DEBUG, "===> THREAD MANAGER HEAD\n");
+
+    // lock the manager
+    syslog(LOG_DEBUG, "Locking manager mutex.");
+    pthread_mutex_lock(&manager_mutex);
+    SLIST_FOREACH(current_entry, &thread_manager, entries) {
+        thread_entry_print(current_entry);
+    }
+    syslog(LOG_DEBUG, "Unlocking manager mutex.");
+    pthread_mutex_unlock(&manager_mutex);
+
+    // print footer
+    syslog(LOG_DEBUG, "===> THREAD MANAGER TAIL\n");
+}
+
+/**************************************************************************************************
+ * FUNCTIONS - TIMESTAMP HANDLER
+ **************************************************************************************************/
+void append_timestamp()
+{
+    // set up variables
+    char timestamp_buffer[64];
+    struct tm *tm_info;
+    time_t current_time;
+
+    // retrieve current time and turn it into RFC 2822 formatted timestamp
+    time(&current_time);
+    tm_info = localtime(&current_time);
+    strftime(timestamp_buffer, sizeof(timestamp_buffer), "timestamp:%a, %d %b %Y %H:%M:%S %z\n", tm_info);
+
+    // open file
+    int timestamp_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+    if (timestamp_fd == -1) {
+        syslog(LOG_ERR, "[TIMER] Error opening timestamp file. (errno %d)", errno);
+        return;
+    }
+
+    // write to file
+    syslog(LOG_DEBUG, "Locking tmpdata mutex.");
+    pthread_mutex_lock(&file_mutex);
+    if (write(timestamp_fd, timestamp_buffer, strlen(timestamp_buffer)) == -1) {
+        syslog(LOG_ERR, "Error writing timestamp to file.");
+    }
+    syslog(LOG_DEBUG, "Unlocking tmpdata mutex.");
+    pthread_mutex_unlock(&file_mutex);
+
+    // close file
+    close(timestamp_fd);
+}
+
+/**************************************************************************************************
+ * FUNCTIONS - SIGNAL HANDLER
+ **************************************************************************************************/
+void signal_handler(int sig) {
+    if(sig == SIGALRM)
+    {
+        syslog(LOG_INFO, "[TIMER] SIGALRM received, writing to file.");
+        append_timestamp();
+    } else {
+        // log signal handler, using re-entrant write() instead of a normal printf/log
+        syslog(LOG_INFO, "Caught signal, exiting");
+
+        // cleanup
+        cleanup_server();
+
+        // exit
+        exit(1);
+    }
+}
+
+/**************************************************************************************************
+ * FUNCTIONS - DAEMON
+ **************************************************************************************************/
 void start_daemon(int argc, char **argv) {
     // check command line options with getopt()
     // https://www.gnu.org/software/libc/manual/html_node/Example-of-Getopt.html
@@ -177,18 +523,38 @@ void start_daemon(int argc, char **argv) {
     // https://stackoverflow.com/questions/17078947/daemon-socket-server-in-c
     // read the above post for classic steps on making a daemon from an executed process
     if (is_daemon) {
-        // change to root
-        chdir("/");
+        // indicate we are in daemon mode
+        syslog(LOG_INFO, "[DAEMON] Starting daemon...");
 
-        // exit if parent process
-        if (fork() > 0) _exit(0);
+        // create first child (child A)
+        pid_t pid;
+        if ((pid = fork()) < 0) {
+            // error creating child process
+            syslog(LOG_ERR, "[DAEMON] Creating first child process fails.");
+            cleanup_server();
+            exit(1);
+        } else if (pid != 0) {
+            // this is the parent process; exit
+            exit(0);
+        }
 
-        // redirect standard outputs to /dev/null
-        close(0);
-        close(1);
-        close(2);
-        open("/dev/null", O_RDWR);
-        dup(0);
-        dup(0);
+        // change child A to be session leader
+        setsid();
+
+        // create second child (child B)
+        if ((pid = fork()) < 0) {
+            // error creating child process
+            syslog(LOG_ERR, "[DAEMON] Creating second child process fails.");
+            cleanup_server();
+            exit(1);
+        } else if (pid != 0) {
+            // this is child A; exit
+            exit(0);
+        }
+
+        // child B returns to original program
+        return;
+    } else {
+        syslog(LOG_INFO, "[DAEMON] Starting in normal mode.");
     }
 }
