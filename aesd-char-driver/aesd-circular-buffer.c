@@ -30,44 +30,32 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
     // guard clause to check for valid arguments
-    if (buffer == NULL) {
+    if (buffer == NULL || entry_offset_byte_rtn == NULL) {
         return NULL;
     }
 
     // set up arguments for parsing
-    int index = 0;
-    int temp = char_offset;
-    bool valid = false;
+    int index = buffer->out_offs;   // current index for reading the circular buffer
+    size_t temp = char_offset;      // decremented by each entry's length, until it can be used to index an entry
+    int iterations = 0;             // keeps track of iterations to make sure wraparound doesn't occur
 
-    // iterative loop
-    while (true) {
-        if (temp < buffer->entry[index].size && temp > 0) {
-            valid = true;
-            break;
-        } else if (temp == 0) {
-            valid = true;
-            break;
-        } else if (temp < 0) {
-            break;
+    // iterate through circular buffer, updating the temp variable until it can be used as an index
+    while (1) {
+        if (temp < buffer->entry[index].size) {
+            // case: entry found with a valid character offset
+            *entry_offset_byte_rtn = temp; // The offset within this entry
+            return &buffer->entry[index];
         } else {
-            temp = temp - buffer->entry[index].size;
-            index++;
+            // case: temp is still out of bounds; iterate again
+            temp -= buffer->entry[index].size;
+            index = (index + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
         }
-
-        // check if overflow occurs
-        if (index == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+        
+        // stop if attempting to wrap around
+        if (++iterations == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
             return NULL;
         }
     }
-    
-    // check if parsing is valid
-    if (valid) {
-        *entry_offset_byte_rtn = (size_t)&buffer->entry[index].buffptr[temp];
-        return &buffer->entry[index];
-    }
-
-    // invalid; return NULL
-    return NULL;
 }
 
 /**
@@ -86,21 +74,12 @@ void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const s
 
     // check if the buffer is full and free the buffer in the oldest entry
     if (buffer->full && (buffer->entry[buffer->in_offs].buffptr != NULL)) {
-        // this needs to free a void pointer, as the original field has a const qualifier
-        free((void *)buffer->entry[buffer->in_offs].buffptr); 
         buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
     }
 
-    // re-allocate memory for the place in memory the new entry should go
-    char *new_buff = (char *)malloc(sizeof(char) * add_entry->size);
-    if (new_buff == NULL) {
-        return;
-    }
-    memcpy(new_buff, add_entry->buffptr, add_entry->size);
-
-    // fill in new entry data
-    buffer->entry[buffer->in_offs].buffptr = new_buff;
-    buffer->entry[buffer->in_offs].size = add_entry->size;
+    // point reference to entry pointer passed in
+    // this assumes the caller will manage mallocs and frees for the data this points to
+    buffer->entry[buffer->in_offs] = *add_entry;
 
     // increment buffer index, wrapping around if full
     buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
