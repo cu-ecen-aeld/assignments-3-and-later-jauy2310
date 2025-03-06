@@ -29,9 +29,44 @@
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
-    /**
-    * TODO: implement per description
-    */
+    // guard clause to check for valid arguments
+    if (buffer == NULL) {
+        return NULL;
+    }
+
+    // set up arguments for parsing
+    int index = 0;
+    int temp = char_offset;
+    bool valid = false;
+
+    // iterative loop
+    while (true) {
+        if (temp < buffer->entry[index].size && temp > 0) {
+            valid = true;
+            break;
+        } else if (temp == 0) {
+            valid = true;
+            break;
+        } else if (temp < 0) {
+            break;
+        } else {
+            temp = temp - buffer->entry[index].size;
+            index++;
+        }
+
+        // check if overflow occurs
+        if (index == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+            return NULL;
+        }
+    }
+    
+    // check if parsing is valid
+    if (valid) {
+        *entry_offset_byte_rtn = (size_t)&buffer->entry[index].buffptr[temp];
+        return &buffer->entry[index];
+    }
+
+    // invalid; return NULL
     return NULL;
 }
 
