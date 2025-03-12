@@ -29,10 +29,33 @@
 struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct aesd_circular_buffer *buffer,
             size_t char_offset, size_t *entry_offset_byte_rtn )
 {
-    /**
-    * TODO: implement per description
-    */
-    return NULL;
+    // guard clause to check for valid arguments
+    if (buffer == NULL || entry_offset_byte_rtn == NULL) {
+        return NULL;
+    }
+
+    // set up arguments for parsing
+    int index = buffer->out_offs;   // current index for reading the circular buffer
+    size_t temp = char_offset;      // decremented by each entry's length, until it can be used to index an entry
+    int iterations = 0;             // keeps track of iterations to make sure wraparound doesn't occur
+
+    // iterate through circular buffer, updating the temp variable until it can be used as an index
+    while (1) {
+        if (temp < buffer->entry[index].size) {
+            // case: entry found with a valid character offset
+            *entry_offset_byte_rtn = temp; // The offset within this entry
+            return &buffer->entry[index];
+        } else {
+            // case: temp is still out of bounds; iterate again
+            temp -= buffer->entry[index].size;
+            index = (index + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+        }
+        
+        // stop if attempting to wrap around
+        if (++iterations == AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED) {
+            return NULL;
+        }
+    }
 }
 
 /**
@@ -44,9 +67,25 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 */
 void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
-    /**
-    * TODO: implement per description
-    */
+    // guard clause to check for valid arguments
+    if (buffer == NULL || add_entry == NULL) {
+        return;
+    }
+
+    // check if the buffer is full and free the buffer in the oldest entry
+    if (buffer->full && (buffer->entry[buffer->in_offs].buffptr != NULL)) {
+        buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+    }
+
+    // point reference to entry pointer passed in
+    // this assumes the caller will manage mallocs and frees for the data this points to
+    buffer->entry[buffer->in_offs] = *add_entry;
+
+    // increment buffer index, wrapping around if full
+    buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+    // check if the buffer is full
+    buffer->full = (buffer->in_offs == buffer->out_offs);
 }
 
 /**
