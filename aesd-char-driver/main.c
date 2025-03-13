@@ -21,26 +21,28 @@
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
-MODULE_AUTHOR("Your Name Here"); /** TODO: fill in your name **/
+MODULE_AUTHOR("Jake Uyechi");
 MODULE_LICENSE("Dual BSD/GPL");
 
 struct aesd_dev aesd_device;
 
 int aesd_open(struct inode *inode, struct file *filp)
 {
-    PDEBUG("open");
-    /**
-     * TODO: handle open
-     */
+    PDEBUG("[AESD] open");
+
+    // add aesd_dev struct to filp private data
+    struct aesd_dev *dev;
+    dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
+    filp->private_data = dev;
+
+    // return
     return 0;
 }
 
 int aesd_release(struct inode *inode, struct file *filp)
 {
-    PDEBUG("release");
-    /**
-     * TODO: handle release
-     */
+    PDEBUG("[AESD] release");
+    
     return 0;
 }
 
@@ -48,7 +50,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("read %zu bytes with offset %lld",count,*f_pos);
+    PDEBUG("[AESD] read %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle read
      */
@@ -59,7 +61,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = -ENOMEM;
-    PDEBUG("write %zu bytes with offset %lld",count,*f_pos);
+    PDEBUG("[AESD] write %zu bytes with offset %lld",count,*f_pos);
     /**
      * TODO: handle write
      */
@@ -75,6 +77,8 @@ struct file_operations aesd_fops = {
 
 static int aesd_setup_cdev(struct aesd_dev *dev)
 {
+    PDEBUG("[AESD] Setting up AESD cdev");
+
     int err, devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_init(&dev->cdev, &aesd_fops);
@@ -91,6 +95,8 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
 
 int aesd_init_module(void)
 {
+    PDEBUG("[AESD] Initializing AESD module");
+
     dev_t dev = 0;
     int result;
     result = alloc_chrdev_region(&dev, aesd_minor, 1,
@@ -102,9 +108,11 @@ int aesd_init_module(void)
     }
     memset(&aesd_device,0,sizeof(struct aesd_dev));
 
-    /**
-     * TODO: initialize the AESD specific portion of the device
-     */
+    // initialize circular buffer using the init function
+    aesd_circular_buffer_init(&aesd_device->cb_commands);
+
+    // create the mutex
+    mutex_init(&aesd_device->lock);
 
     result = aesd_setup_cdev(&aesd_device);
 
@@ -117,13 +125,23 @@ int aesd_init_module(void)
 
 void aesd_cleanup_module(void)
 {
+    PDEBUG("[AESD] Cleaning up AESD module");
+    
     dev_t devno = MKDEV(aesd_major, aesd_minor);
 
     cdev_del(&aesd_device.cdev);
 
-    /**
-     * TODO: cleanup AESD specific poritions here as necessary
-     */
+    // deinitialize the mutex
+    mutex_destroy(&aesd_device->lock);
+
+    // free each of the individual entries in the circular buffer
+    struct aesd_buffer_entry *temp;
+    uint8_t index;
+    AESD_CIRCULAR_BUFFER_FOREACH(temp, &aesd_device->cb_commands, index) {
+        if (temp->buffptr) {
+            kfree(temp->buffptr);
+        }
+    }
 
     unregister_chrdev_region(devno, 1);
 }
