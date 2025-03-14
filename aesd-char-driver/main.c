@@ -110,47 +110,73 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
         // if NULL, there's no new newline chars; exit loop
         if (newline_pos == NULL) {
             break;
-        } else {
-            // there's a command break; process command data to write to circular buffer
-            size_t substr_len = newline_pos - currline_pos + 1; // +1 to include newline
-
-            // allocate memory for the subcommand to add to buffer
-            char *substr_buffer = kmalloc(substr_len, GFP_KERNEL);
-            if (substr_buffer == NULL) {
-                retval = -ENOMEM;
-                goto cleanup_substringprocessloop;
-            }
-
-            // copy command to the new buffer
-            memcpy(substr_buffer, currline_pos, substr_len);
-
-            // create a temporary buffer entry to add
-            struct aesd_buffer_entry *to_add = kmalloc(sizeof(aesd_buffer_entry), GFP_KERNEL);
-            to_add->buffptr = substr_buffer;
-            to_add->size = substr_len;
-
-            // write data to cb
-            struct aesd_buffer_entry *to_free = aesd_circular_buffer_add_entry(dev->cb_commands, to_add, count);
-
-            // free entry data, if necessary
-            if (to_free != NULL) {
-                kfree(to_free->buffptr);
-            }
-
-            // free the kmallocs used in this process iteration
-            kfree(to_add);
-            kfree(substr_buffer);
-
-            // update the pointers and size for the processing loop
-            currline_pos = newline_pos + 1; // set to the next char after the newline
-            remaining_size -= substr_len; // reduce the remainder by the length of the substring processed
         }
+
+        // there's a command break; process command data to write to circular buffer
+        size_t substr_len = newline_pos - currline_pos + 1; // +1 to include newline
+
+        // allocate memory for the subcommand to add to buffer
+        char *substr_buffer = kmalloc(substr_len, GFP_KERNEL);
+        if (substr_buffer == NULL) {
+            retval = -ENOMEM;
+            goto cleanup_substringprocessloop;
+        }
+
+        // copy command to the new buffer
+        memcpy(substr_buffer, currline_pos, substr_len);
+
+        // create a temporary buffer entry to add
+        struct aesd_buffer_entry *to_add = kmalloc(sizeof(aesd_buffer_entry), GFP_KERNEL);
+        if (to_add == NULL) {
+            kfree(substr_buffer);
+            retval = -ENOMEM;
+            goto cleanup_substringprocessloop;
+        }
+        to_add->buffptr = substr_buffer;
+        to_add->size = substr_len;
+
+        // write data to cb
+        const char *to_free = aesd_circular_buffer_add_entry(dev->cb_commands, to_add, count);
+
+        // free entry data, if necessary
+        if (to_free != NULL) {
+            kfree(to_free);
+        }
+
+        // free the kmallocs used in this process iteration
+        kfree(to_add);
+        kfree(substr_buffer);
+
+        // update the pointers and size for the processing loop
+        currline_pos = newline_pos + 1; // set to the next char after the newline
+        remaining_size -= substr_len; // reduce the remainder by the length of the substring processed
+    }
+
+    // case where there's an incomplete substring command following the processing step
+    if (remaining_size > 0) {
+        // create an excess buffer
+        char *excess = kmalloc(remaining_size, GFP_KERNEL);
+        if (excess == NULL) {
+            retval = -ENOMEM;
+            goto cleanup_excesshandling;
+        }
+
+        // copy and replace the command buffer
+        memcpy(excess, currline_pos, remaining_size);
+        kfree(dev->buffer);
+        dev->buffer = excess;
+        dev->buffer_size = remaining_size;
+    } else {
+        // empty command; update buffer accordingly
+        kfree(dev->buffer);
+        dev->buffer = NULL;
+        dev->buffer_size = 0;
     }
     
     // return value
     retval = count;
 
-
+cleanup_excesshandling:
 cleanup_substringprocessloop:
 cleanup_appendcmd:
     mutex_unlock(&dev->lock);
