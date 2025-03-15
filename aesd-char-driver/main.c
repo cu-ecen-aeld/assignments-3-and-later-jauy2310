@@ -49,14 +49,38 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
     ssize_t retval = 0;
-    PDEBUG("[AESD] read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
+    struct aesd_dev *dev = filp->private_data;
 
-    
+    if (!dev || !buf || !count) {
+        return -EINVAL; // Invalid arguments
+    }
 
-    // return
+    mutex_lock(&dev->lock);
+
+    size_t entry_offset;
+    struct aesd_buffer_entry *entry = aesd_circular_buffer_find_entry_offset_for_fpos(
+        dev->cb_commands, *f_pos, &entry_offset);
+
+    if (!entry) {
+        mutex_unlock(&dev->lock);
+        return 0; // No data available to read
+    }
+
+    // Calculate how many bytes to copy
+    size_t bytes_to_copy = min(entry->size - entry_offset, count);
+
+    // Copy data to userspace
+    if (copy_to_user(buf, entry->buffptr + entry_offset, bytes_to_copy)) {
+        retval = -EFAULT;
+        goto cleanup;
+    }
+
+    // Update file position
+    *f_pos += bytes_to_copy;
+    retval = bytes_to_copy;
+
+cleanup:
+    mutex_unlock(&dev->lock);
     return retval;
 }
 
