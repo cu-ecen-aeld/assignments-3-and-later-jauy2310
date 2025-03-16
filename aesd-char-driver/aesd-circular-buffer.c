@@ -67,17 +67,17 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 *
 * @return a pointer to the aesd_buffer_entry that was overwritten, NULL otherwise
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+const char *aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
     // guard clause to check for valid arguments
     if (buffer == NULL || add_entry == NULL) {
-        return;
+        return NULL;
     }
 
     // save some of the buffer's state before overwriting
-    struct aesd_buffer_entry *old_entry = NULL;
+    const char *old_entry = NULL;
     if (buffer->full) {
-        old_entry = &buffer->entry[buffer->in_offs];
+        old_entry = buffer->entry[buffer->in_offs].buffptr;
     }
 
     // check if the buffer is full

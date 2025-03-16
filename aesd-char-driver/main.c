@@ -20,7 +20,6 @@
 
 // AESD-specific includes
 #include "aesdchar.h"
-#include "aesd-circular-buffer.h"
 
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
@@ -97,7 +96,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 
     // copy to user, limited by the read_size
     // this copy should start at the entry returned from the find_offset function, plus the offset within that entry
-    if (copy_to_user(buf, read_entry->buffptr + offset, read_size) > 0) {
+    if (copy_to_user(buf, read_entry->buffptr + offset, read_size)) {
         retval = -EFAULT;
         goto cleanup;
     }
@@ -119,9 +118,80 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
 {
     ssize_t retval = -ENOMEM;
     PDEBUG("[AESD] write %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle write
-     */
+    
+    // get the device struct from file pointer
+    struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
+
+    // lock device mutex
+    if (mutex_lock_interruptible(&dev->lock)) return -EINTR;
+
+    // realloc the incomplete command buffer in the device struct to accomodate for incoming command
+    size_t new_size = dev->incomplete_command_size + count;
+    char *new_incomplete_command_buffer = krealloc(dev->incomplete_command_buffer, new_size, GFP_KERNEL);
+    if (new_incomplete_command_buffer == NULL) {
+        retval = -ENOMEM;
+        goto cleanup;
+    }
+
+    // update pointer with realloc'd buffer
+    dev->incomplete_command_buffer = new_incomplete_command_buffer;
+    
+    // append the incoming command to the previous incomplete command buffer
+    if (copy_from_user(dev->incomplete_command_buffer + dev->incomplete_command_size, buf, count)) {
+        retval = -EFAULT;
+        goto cleanup;
+    }
+
+    // update the incomplete command buffer size stored in the device struct
+    dev->incomplete_command_size = new_size;
+
+    // process the incomplete command buffer
+    char *subcommand_start = dev->incomplete_command_buffer;
+    char *subcommand_break;
+    size_t subcommand_size = dev->incomplete_command_size;
+
+    // keep track of remaining size
+    size_t remaining_size = dev->incomplete_command_size;
+
+    while ((subcommand_break = memchr(subcommand_start, '\n', subcommand_size))) {
+        // create a new char * for subcommands
+        subcommand_size = subcommand_break - subcommand_start + 1; // accommodate for newline
+        char *subcommand = kmalloc(subcommand_size + 1, GFP_KERNEL); // accommodate for null-terminating char
+        if (subcommand == NULL) {
+            retval = -ENOMEM;
+            goto cleanup;
+        }
+        memcpy(subcommand, subcommand_start, subcommand_size);
+        subcommand[subcommand_size] = '\0';
+
+        // create a new entry to add to circular buffer
+        struct aesd_buffer_entry *new_entry = 
+            &dev->circular_buffer.entry[dev->circular_buffer.in_offs];
+        new_entry->buffptr = subcommand;
+        new_entry->size = subcommand_size;
+        const char *to_free = aesd_circular_buffer_add_entry(&dev->circular_buffer, new_entry);
+        if (to_free) {
+            kfree(to_free);
+        }
+
+        // update the start point, +1 to go to the character after the newline
+        subcommand_start = subcommand_break + 1;
+
+        // update the remaining size of the command buffer
+        remaining_size -= subcommand_size;
+    }
+
+    // if there is an incomplete command still in the buffer, add it back to the incomplete command buffer
+    if (*subcommand_start != '\0') {
+        dev->incomplete_command_size = remaining_size;
+        dev->incomplete_command_buffer = subcommand_start;
+    } else {
+        dev->incomplete_command_size = 0;
+        dev->incomplete_command_buffer = NULL;
+    }
+
+cleanup:
+    mutex_unlock(&dev->lock);
     return retval;
 }
 
@@ -199,9 +269,6 @@ void aesd_cleanup_module(void)
             temp->buffptr = NULL;
         }
     }
-
-    // deinitialize the mutex
-    mutex_destroy(&aesd_device->lock);
 
     cdev_del(&aesd_device.cdev);
 
