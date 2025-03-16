@@ -17,15 +17,30 @@
 #include <linux/types.h>
 #include <linux/cdev.h>
 #include <linux/fs.h> // file_operations
+
+// AESD-specific includes
 #include "aesdchar.h"
+#include "aesd-circular-buffer.h"
+
 int aesd_major =   0; // use dynamic major
 int aesd_minor =   0;
 
+// module information
 MODULE_AUTHOR("Jake Uyechi");
 MODULE_LICENSE("Dual BSD/GPL");
 
+// global structs
 struct aesd_dev aesd_device;
 
+struct file_operations aesd_fops = {
+    .owner =    THIS_MODULE,
+    .read =     aesd_read,
+    .write =    aesd_write,
+    .open =     aesd_open,
+    .release =  aesd_release,
+};
+
+// module open
 int aesd_open(struct inode *inode, struct file *filp)
 {
     PDEBUG("[AESD] open");
@@ -34,18 +49,24 @@ int aesd_open(struct inode *inode, struct file *filp)
     struct aesd_dev *dev;
     dev = container_of(inode->i_cdev, struct aesd_dev, cdev);
     filp->private_data = dev;
+    filp->f_pos = 0;
 
     // return
     return 0;
 }
 
+// module release
 int aesd_release(struct inode *inode, struct file *filp)
 {
     PDEBUG("[AESD] release");
     
+    // set the private_data to NULL
+    filp->private_data = NULL;
+
     return 0;
 }
 
+// read data from circular buffer to user
 ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
                 loff_t *f_pos)
 {
@@ -57,6 +78,7 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
     return retval;
 }
 
+// write data from user to circular buffer
 ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
                 loff_t *f_pos)
 {
@@ -67,14 +89,8 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
      */
     return retval;
 }
-struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
-};
 
+// module setup cdev
 static int aesd_setup_cdev(struct aesd_dev *dev)
 {
     PDEBUG("[AESD] Setting up AESD cdev");
@@ -91,8 +107,7 @@ static int aesd_setup_cdev(struct aesd_dev *dev)
     return err;
 }
 
-
-
+// module initialize
 int aesd_init_module(void)
 {
     PDEBUG("[AESD] Initializing AESD module");
@@ -108,11 +123,15 @@ int aesd_init_module(void)
     }
     memset(&aesd_device,0,sizeof(struct aesd_dev));
 
-    // initialize circular buffer using the init function
-    aesd_circular_buffer_init(&aesd_device->cb_commands);
+    // initialize device mutex
+    mutex_init(&aesd_device.lock);
 
-    // create the mutex
-    mutex_init(&aesd_device->lock);
+    // initialize circular buffer inside device
+    aesd_circular_buffer_init(&aesd_device.circular_buffer);
+
+    // initialize the incomplete command buffer
+    aesd_device.incomplete_command_buffer = NULL;
+    aesd_device.incomplete_command_size = 0;
 
     result = aesd_setup_cdev(&aesd_device);
 
@@ -120,28 +139,36 @@ int aesd_init_module(void)
         unregister_chrdev_region(dev, 1);
     }
     return result;
-
 }
 
+// module cleanup
 void aesd_cleanup_module(void)
 {
     PDEBUG("[AESD] Cleaning up AESD module");
     
     dev_t devno = MKDEV(aesd_major, aesd_minor);
 
-    cdev_del(&aesd_device.cdev);
-
-    // deinitialize the mutex
-    mutex_destroy(&aesd_device->lock);
+    // clear the incomplete command buffer
+    if (aesd_device.incomplete_command_buffer) {
+        kfree(aesd_device.incomplete_command_buffer);
+        aesd_device.incomplete_command_buffer = NULL;
+        aesd_device.incomplete_command_size = 0;
+    }
 
     // free each of the individual entries in the circular buffer
     struct aesd_buffer_entry *temp;
     uint8_t index;
-    AESD_CIRCULAR_BUFFER_FOREACH(temp, &aesd_device->cb_commands, index) {
+    AESD_CIRCULAR_BUFFER_FOREACH(temp, &aesd_device.circular_buffer, index) {
         if (temp->buffptr) {
             kfree(temp->buffptr);
+            temp->buffptr = NULL;
         }
     }
+
+    // deinitialize the mutex
+    mutex_destroy(&aesd_device->lock);
+
+    cdev_del(&aesd_device.cdev);
 
     unregister_chrdev_region(devno, 1);
 }

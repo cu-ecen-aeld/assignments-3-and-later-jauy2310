@@ -27,8 +27,9 @@
 
 struct aesd_dev
 {
-    struct aesd_circular_buffer cb_commands;
-    struct aesd_buffer_entry command_buffer;
+    struct aesd_circular_buffer *circular_buffer;
+    char *incomplete_command_buffer;
+    size_t incomplete_command_size;
     struct mutex lock;
     struct cdev cdev;     /* Char device structure      */
 };
