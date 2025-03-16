@@ -72,9 +72,44 @@ ssize_t aesd_read(struct file *filp, char __user *buf, size_t count,
 {
     ssize_t retval = 0;
     PDEBUG("[AESD] read %zu bytes with offset %lld",count,*f_pos);
-    /**
-     * TODO: handle read
-     */
+
+    // check if the read requests 0 bytes, return early if needed
+    if (count == 0) return 0;
+    
+    // retrieve driver data from filp
+    struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
+
+    // lock mutex
+    if (mutex_lock_interruptible(&dev->lock)) return -EINTR;
+
+    // start retrieving data; call find_entry_offset function to retrieve the data needed from the circular buffer
+    size_t offset;
+    struct aesd_buffer_entry *read_entry = 
+        aesd_circular_buffer_find_entry_offset_for_fpos(&dev->circular_buffer, *f_pos, &offset);
+    if (read_entry == NULL || read_entry->buffptr == NULL) {
+        // entry data is missing; return 0
+        retval = 0;
+        goto cleanup;
+    }
+    
+    // determine the read size based on the entry size at the offset and the count limit
+    size_t read_size = min(count, read_entry->size - offset);
+
+    // copy to user, limited by the read_size
+    // this copy should start at the entry returned from the find_offset function, plus the offset within that entry
+    if (copy_to_user(buf, read_entry->buffptr + offset, read_size) > 0) {
+        retval = -EFAULT;
+        goto cleanup;
+    }
+
+    // update the f_pos argument with the new read pointer
+    *f_pos += read_size;
+
+    // set return value equal to the read size
+    retval = read_size;
+
+cleanup:
+    mutex_unlock(&dev->lock);
     return retval;
 }
 
