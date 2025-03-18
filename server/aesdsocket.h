@@ -31,10 +31,17 @@
  * CONSTANTS AND GLOBALS
  **************************************************************************************************/
 
+// build switch - either use a char device or a file in filesystem
+#define USE_AESD_CHAR_DEVICE 1
+#if USE_AESD_CHAR_DEVICE
+    #define TMPDATA_PATH        "/dev/aesdchar"
+#else
+    #define TMPDATA_PATH        "/var/tmp/aesdsocketdata"
+#endif
+
 // define constants
 #define PORT                "9000"
 #define NUM_CONNECTIONS     10
-#define TMPDATA_PATH        "/var/tmp/aesdsocketdata"
 #define BUFFER_SIZE         1024 * 1024
 #define TIMER_FREQ_S        10
 
@@ -71,6 +78,15 @@ void initialize_server();
  * @return none
  */
 void initialize_timer();
+
+/**
+ * cleanup_server()
+ * 
+ * Cleans server
+ * 
+ * @return none
+ */
+void cleanup_server();
 
 /**
  * accept_connections()
