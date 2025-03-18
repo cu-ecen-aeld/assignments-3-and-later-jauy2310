@@ -126,12 +126,85 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     if (mutex_lock_interruptible(&dev->lock)) return -EINTR;
 
     // kmalloc a new buffer for userspace data
-    char *to_write = kmalloc(count + 1, GFP_KERNEL);
-    if (copy_from_user(to_write, buf, count)) {
+    size_t total_size = dev->incomplete_command_size + count;
+    char *to_write = kmalloc(total_size, GFP_KERNEL);
+
+    // copy the existing buffer
+    if (dev->incomplete_command_buffer != NULL) {
+        memcpy(to_write, dev->incomplete_command_buffer, dev->incomplete_command_size);
+        kfree(dev->incomplete_command_buffer);
+    }
+
+    // copy the incoming buffer from userspace
+    if (copy_from_user(to_write + dev->incomplete_command_size, buf, count)) {
         retval = -EFAULT;
+        kfree(to_write);
         goto cleanup;
     }
-    PDEBUG("[WRITE] %s", to_write);
+
+    // free the old buffer in the device struct and point it to the new buffer
+    dev->incomplete_command_buffer = to_write;
+    dev->incomplete_command_size = total_size;
+    
+    // check if there's a newline to process
+    char *cmd_break;
+    char *cmd_start = dev->incomplete_command_buffer;
+    size_t read_size = total_size;
+    while ((cmd_break = memchr(cmd_start, '\n', read_size))) {
+        // there is a newline, and cmd_break points to it
+
+        // create a new sub command for everything before the first break
+        size_t subcmd_size = (cmd_break - dev->incomplete_command_buffer) + 1;
+        char *subcmd = kmalloc(subcmd_size, GFP_KERNEL);
+        memcpy(subcmd, cmd_start, subcmd_size);
+
+        // create a new entry struct and copy the sub command to it, freeing it after copying
+        struct aesd_buffer_entry to_add;
+        to_add.size = subcmd_size;
+        to_add.buffptr = kmalloc(subcmd_size, GFP_KERNEL);
+        if (to_add.buffptr == NULL) {
+            retval = -ENOMEM;
+            kfree(subcmd);
+            goto cleanup;
+        }
+        memcpy((void *)to_add.buffptr, subcmd, subcmd_size);
+        kfree(subcmd);
+
+        // add the new entry, capturing the old one 
+        const char *to_free = aesd_circular_buffer_add_entry(&dev->circular_buffer, &to_add);
+        if (to_free) {
+            kfree(to_free);
+        }
+
+        // update the cmd_start and read_size pointers
+        cmd_start = cmd_break + 1;
+        read_size -= (subcmd_size > read_size) ? read_size : subcmd_size;
+    }
+
+    // check if there's an excess command
+    if (cmd_start < dev->incomplete_command_buffer + total_size) {
+        // create a buffer for excess command
+        size_t remaining_size = dev->incomplete_command_buffer + total_size - cmd_start;
+        char *remaining = kmalloc(remaining_size, GFP_KERNEL);
+        if (remaining == NULL) {
+            retval = -ENOMEM;
+            goto cleanup;
+        }
+        memcpy(remaining, cmd_start, remaining_size);
+
+        // free the old buffer
+        kfree(dev->incomplete_command_buffer);
+        dev->incomplete_command_buffer = remaining;
+        dev->incomplete_command_size = remaining_size;
+    } else {
+        // no excess command, set the incomplete buffer to NULL and size to 0
+        kfree(dev->incomplete_command_buffer);
+        dev->incomplete_command_buffer = NULL;
+        dev->incomplete_command_size = 0;
+    }
+
+    // set the return value to count
+    retval = count;
 
 cleanup:
     mutex_unlock(&dev->lock);
