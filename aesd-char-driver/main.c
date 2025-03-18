@@ -206,6 +206,9 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count,
     // set the return value to count
     retval = count;
 
+    // debug print
+    aesd_print_cb(&dev->circular_buffer);
+
 cleanup:
     mutex_unlock(&dev->lock);
     return retval;
@@ -291,7 +294,23 @@ void aesd_cleanup_module(void)
     unregister_chrdev_region(devno, 1);
 }
 
-
+void aesd_print_cb(struct aesd_circular_buffer *cb)
+{
+    PDEBUG("===== [CIRCULAR BUFFER] =====");
+    struct aesd_buffer_entry *temp;
+    uint8_t index;
+    AESD_CIRCULAR_BUFFER_FOREACH(temp, &aesd_device.circular_buffer, index) {
+        if (temp->buffptr) {
+            char *printbuf = kmalloc(temp->size + 1, GFP_KERNEL);
+            memcpy(printbuf, temp->buffptr, temp->size);
+            printbuf[temp->size] = '\0';
+            PDEBUG("[%d] %s", index, printbuf);
+            kfree(printbuf);
+        } else {
+            PDEBUG("[%d] (null)", index);
+        }
+    }
+}
 
 module_init(aesd_init_module);
 module_exit(aesd_cleanup_module);
