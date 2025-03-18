@@ -302,6 +302,7 @@ thread_entry_t *thread_entry_create(pthread_t new_thread_id, const char *new_cli
     new_thread_entry->client_ip = strdup(new_client_ip);
     if (!new_thread_entry->client_ip) {
         syslog(LOG_ERR, "Error malloc'ing thread_entry->client_ip");
+        free(new_thread_entry->client_ip);
         free(new_thread_entry);
         return NULL;
     }
