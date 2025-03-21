@@ -294,6 +294,17 @@ void aesd_cleanup_module(void)
     unregister_chrdev_region(devno, 1);
 }
 
+ssize_t aesd_size(struct aesd_circular_buffer *cb)
+{
+    struct aesd_buffer_entry *temp;
+    uint8_t index;
+    ssize_t bytes = 0;
+    AESD_CIRCULAR_BUFFER_FOREACH(temp, &aesd_device.circular_buffer, index) {
+        bytes += temp->size;
+    }
+    return bytes;
+}
+
 void aesd_print_cb(struct aesd_circular_buffer *cb)
 {
     PDEBUG("===== [CIRCULAR BUFFER] =====");
@@ -310,6 +321,7 @@ void aesd_print_cb(struct aesd_circular_buffer *cb)
             PDEBUG("[%d] (null)", index);
         }
     }
+    PDEBUG("===== [TOTAL SIZE: %ld] =====", aesd_size(cb));
 }
 
 module_init(aesd_init_module);

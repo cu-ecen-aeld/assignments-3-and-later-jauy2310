@@ -44,6 +44,7 @@ ssize_t aesd_write(struct file *filp, const char __user *buf, size_t count, loff
 static int aesd_setup_cdev(struct aesd_dev *dev);
 int aesd_init_module(void);
 void aesd_cleanup_module(void);
+ssize_t aesd_size(struct aesd_circular_buffer *cb);
 void aesd_print_cb(struct aesd_circular_buffer *cb);
 
 
