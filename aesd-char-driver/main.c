@@ -219,12 +219,19 @@ cleanup:
 loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
     PDEBUG("[AESD] llseek using offset %lld, starting from %d", off, whence);
     
+    int retval;
+
     // get the device struct from file pointer
     struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
     loff_t cb_size = (loff_t)aesd_size(&dev->circular_buffer);
 
     // use the fixed_size_llseek, immediately returning the result of the function
-    return fixed_size_llseek(filp, off, whence, cb_size);
+    mutex_lock(&filp->f_pos_lock);
+    retval = fixed_size_llseek(filp, off, whence, cb_size);
+    mutex_unlock(&filp->f_pos_lock);
+
+    // return
+    return retval;
 }
 
 // module setup cdev
