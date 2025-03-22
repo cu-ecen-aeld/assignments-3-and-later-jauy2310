@@ -234,6 +234,75 @@ loff_t aesd_llseek(struct file *filp, loff_t off, int whence) {
     return retval;
 }
 
+/**
+ * Adjust f_pos of the file based on the location of the write command and offset
+ * 
+ * @param filp                  file pointer
+ * @param write_cmd             the index of the write command to seek to
+ * @param write_cmd_offset      the offset within write_cmd to seek to
+ * 
+ * @return 0 on success, -ERR on failure
+ */
+static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, unsigned int write_cmd_offset) {
+    // get private data from device
+    struct aesd_dev *dev = (struct aesd_dev *)filp->private_data;
+    
+    // check if command exceeds the circular buffer size
+    if (!(write_cmd < AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED)) {
+        PDEBUG("[AESD] File offset to index %d exceeds command buffer size.", write_cmd);
+        return -EINVAL;
+    }
+
+    // check if command offset exceeds the command
+    struct aesd_buffer_entry *selected_entry = &dev->circular_buffer.entry[write_cmd];
+    if (!(write_cmd_offset < selected_entry->size)) {
+        PDEBUG("[AESD] Command offset to %d in '%s' exceeds command size.",
+            write_cmd_offset, selected_entry->buffptr);
+        return -EINVAL;
+    }
+
+    // calculate offset
+    struct aesd_buffer_entry *temp;
+    uint8_t index;
+    loff_t calculated_offset = 0;
+    AESD_CIRCULAR_BUFFER_FOREACH(temp, &aesd_device.circular_buffer, index) {
+        if (index < write_cmd) {
+            calculated_offset += temp->size;
+        } else if (index == write_cmd) {
+            calculated_offset += write_cmd_offset;
+            break;
+        }
+    }
+
+    // valid command offset, update f_pos with calculated offset
+    mutex_lock(&filp->f_pos_lock);
+    filp->f_pos = calculated_offset;
+    mutex_unlock(&filp->f_pos_lock);
+
+    return 0;
+}
+
+long aesd_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
+    // define a return value for all ioctls 
+    long retval = -ENOTTY;
+
+    // switch statement to handle different ioctl commands
+    switch (cmd) {
+        case AESDCHAR_IOCSEEKTO:
+            PDEBUG("[AESD] Received ioctl, cmd: AESDCHAR_IOCSEEKTO.");
+            struct aesd_seekto seekto;
+            if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) == 0) {
+                retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
+            } else {
+                retval = EFAULT;
+            }
+            break;
+    }
+
+    // return
+    return retval;
+}
+
 // module setup cdev
 static int aesd_setup_cdev(struct aesd_dev *dev)
 {
