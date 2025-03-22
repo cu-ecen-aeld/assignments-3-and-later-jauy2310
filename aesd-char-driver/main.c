@@ -315,10 +315,33 @@ void aesd_print_cb(struct aesd_circular_buffer *cb)
             char *printbuf = kmalloc(temp->size + 1, GFP_KERNEL);
             memcpy(printbuf, temp->buffptr, temp->size);
             printbuf[temp->size] = '\0';
-            PDEBUG("[%d] %s", index, printbuf);
+
+            if (cb->in_offs == index && cb->out_offs == index) {
+                // in/out pointers are at the same index
+                PDEBUG("[I/O %d] %s", index, printbuf);
+            } else if (cb->in_offs == index) {
+                // current index is the in pointer
+                PDEBUG("[ I  %d] %s", index, printbuf);
+            } else if (cb->out_offs == index) {
+                // current index is the out pointer
+                PDEBUG("[ O  %d] %s", index, printbuf);
+            } else {
+                PDEBUG("[    %d] %s", index, printbuf);
+            }
             kfree(printbuf);
         } else {
-            PDEBUG("[%d] (null)", index);
+            if (cb->in_offs == index && cb->out_offs == index) {
+                // in/out pointers are at the same index
+                PDEBUG("[I/O %d] (null)", index);
+            } else if (cb->in_offs == index) {
+                // current index is the in pointer
+                PDEBUG("[ I  %d] (null)", index);
+            } else if (cb->out_offs == index) {
+                // current index is the out pointer
+                PDEBUG("[ O  %d] (null)", index);
+            } else {
+                PDEBUG("[    %d] (null)", index);
+            }
         }
     }
     PDEBUG("===== [TOTAL SIZE: %ld] =====", aesd_size(cb));
