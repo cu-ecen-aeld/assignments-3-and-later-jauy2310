@@ -67,6 +67,7 @@ exit_free_addrinfo_struct:
     freeaddrinfo(server_address_info);
 
     // server cleanup
+    cleanup_server();
 
     // return
     return 0;
@@ -136,8 +137,10 @@ void cleanup_server() {
     // attempt to free addrinfo struct
     freeaddrinfo(server_address_info);
 
-    // remove tmpdata file
+    // remove tmpdata file if it is not a char driver
+    #if !USE_AESD_CHAR_DEVICE
     remove(TMPDATA_PATH);
+    #endif
 
     // close syslog
     closelog();
@@ -299,6 +302,7 @@ thread_entry_t *thread_entry_create(pthread_t new_thread_id, const char *new_cli
     new_thread_entry->client_ip = strdup(new_client_ip);
     if (!new_thread_entry->client_ip) {
         syslog(LOG_ERR, "Error malloc'ing thread_entry->client_ip");
+        free(new_thread_entry->client_ip);
         free(new_thread_entry);
         return NULL;
     }
@@ -448,6 +452,11 @@ void thread_entry_printall() {
 /**************************************************************************************************
  * FUNCTIONS - TIMESTAMP HANDLER
  **************************************************************************************************/
+#if USE_AESD_CHAR_DEVICE
+void append_timestamp() {
+    return;
+}
+#else
 void append_timestamp()
 {
     // set up variables
@@ -479,6 +488,7 @@ void append_timestamp()
     // close file
     close(timestamp_fd);
 }
+#endif
 
 /**************************************************************************************************
  * FUNCTIONS - SIGNAL HANDLER

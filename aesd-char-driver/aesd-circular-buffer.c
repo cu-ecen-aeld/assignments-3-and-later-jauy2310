@@ -64,28 +64,44 @@ struct aesd_buffer_entry *aesd_circular_buffer_find_entry_offset_for_fpos(struct
 * new start location.
 * Any necessary locking must be handled by the caller
 * Any memory referenced in @param add_entry must be allocated by and/or must have a lifetime managed by the caller.
+*
+* @return a pointer to the aesd_buffer_entry that was overwritten, NULL otherwise
 */
-void aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
+const char *aesd_circular_buffer_add_entry(struct aesd_circular_buffer *buffer, const struct aesd_buffer_entry *add_entry)
 {
     // guard clause to check for valid arguments
     if (buffer == NULL || add_entry == NULL) {
-        return;
+        return NULL;
     }
 
-    // check if the buffer is full and free the buffer in the oldest entry
-    if (buffer->full && (buffer->entry[buffer->in_offs].buffptr != NULL)) {
+    // check if buffer is full
+    const char *old_entry = NULL;
+    if (buffer->full) {
+        // buffer is full...
+        // increment the output offset to go past the entry that will be overwritten
         buffer->out_offs = (buffer->out_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
+
+        // set the entry to be freed as the contents of the entry at the input offset
+        old_entry = buffer->entry[buffer->in_offs].buffptr;
+
+        // overwrite the entry at the input offset
+        buffer->entry[buffer->in_offs] = *add_entry;
+    } else {
+        // buffer is empty...
+        // set the entry at the input offset to the incoming entry
+        buffer->entry[buffer->in_offs] = *add_entry;
     }
 
-    // point reference to entry pointer passed in
-    // this assumes the caller will manage mallocs and frees for the data this points to
-    buffer->entry[buffer->in_offs] = *add_entry;
-
-    // increment buffer index, wrapping around if full
+    // increment the input offset to point to the next entry
     buffer->in_offs = (buffer->in_offs + 1) % AESDCHAR_MAX_WRITE_OPERATIONS_SUPPORTED;
 
     // check if the buffer is full
-    buffer->full = (buffer->in_offs == buffer->out_offs);
+    if (!buffer->full && (buffer->in_offs == buffer->out_offs)) {
+        buffer->full = true;
+    }
+
+    // if buffer was full and value was overwritten, return pointer
+    return old_entry;
 }
 
 /**
