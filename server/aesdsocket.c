@@ -50,7 +50,9 @@ int main(int argc, char *argv[]) {
     start_daemon(argc, argv);
 
     // start timer
+    #if !USE_AESD_CHAR_DEVICE
     initialize_timer();
+    #endif
 
     // accept connections - main program loop
     accept_connections();
@@ -166,8 +168,16 @@ void accept_connections() {
         inet_ntop(client->sin_family, &client->sin_addr, client_ip, sizeof(client_ip));
         syslog(LOG_INFO, "Accepted connection from %s", client_ip);
 
+        // open file
+        int tmpdata_client_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+        if (tmpdata_client_fd == -1) {
+            syslog(LOG_ERR, "Failed to open %s", TMPDATA_PATH);
+            close(client_fd);
+            continue;
+        }
+
         // create a new entry
-        thread_entry_t *new_connection = thread_entry_create(0, client_ip, client_fd);
+        thread_entry_t *new_connection = thread_entry_create(0, client_ip, client_fd, tmpdata_client_fd);
         if (new_connection == NULL) {
             syslog(LOG_ERR, "Error malloc'ing memory for new thread entry");
             continue;
@@ -183,6 +193,7 @@ void accept_connections() {
             thread_entry_add(new_connection);
         }
 
+        thread_entry_printall();
 
         // check if any of the current threads need to be joined
         thread_entry_t *current_entry = NULL;
@@ -190,6 +201,8 @@ void accept_connections() {
             if (current_entry->is_complete) {
                 // join thread for completed threads
                 pthread_join(current_entry->thread_id, NULL);
+                close(current_entry->tmpdata_fd);
+                thread_entry_remove(current_entry->thread_id);
             }
         }
     }
@@ -200,18 +213,11 @@ void *client_handler(void *arg) {
     thread_entry_t *connection = (thread_entry_t *)arg;
     pthread_t thread_id = connection->thread_id;
     int client_fd = connection->client_fd;
+    int tmpdata_client_fd = connection->tmpdata_fd;
 
     // print
     syslog(LOG_DEBUG, "New connection:");
     thread_entry_print(connection);
-    
-    // open file to write
-    int tmpdata_client_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP); 
-    if (tmpdata_client_fd == -1) {
-        syslog(LOG_ERR, "Failed to open %s", TMPDATA_PATH);
-        close(client_fd);
-        return NULL;
-    }
 
     // read_buffer to store incoming data
     char read_buffer[BUFFER_SIZE] = {0};
@@ -245,15 +251,38 @@ void *client_handler(void *arg) {
                 syslog(LOG_DEBUG, "Locking tmpdata mutex.");
                 pthread_mutex_lock(&file_mutex);
 
-                // reset write buffer and write to file
-                lseek(tmpdata_client_fd, 0, SEEK_END);
-                if (write(tmpdata_client_fd, write_buffer, write_buffer_index) == -1) {
-                    syslog(LOG_ERR, "Error writing buffer to client.");
-                    continue;
-                }
-                if (write(tmpdata_client_fd, "\n", 1) == -1) {
-                    syslog(LOG_ERR, "Error writing newline to client.");
-                    continue;
+                // switch behavior based on the presence of the IOCTL string
+                if (USE_AESD_CHAR_DEVICE && strstr(write_buffer, AESD_IOCTL_SEEKTO)) {
+                    // handle ioctl commands
+
+                    // parse the index and offset from the command
+                    size_t index, offset;
+                    if (sscanf(read_buffer, AESD_IOCTL_SEEKTO_PARSE, &index, &offset) != 2) {
+                        // parsing unsuccessful
+                        syslog(LOG_ERR, "Parsing ioctl command unsuccessful.");
+                    }
+
+                    // save to struct
+                    struct aesd_seekto seekto;
+                    seekto.write_cmd = index;
+                    seekto.write_cmd_offset = offset;
+
+                    // send ioctl to device
+                    syslog(LOG_DEBUG, "Received ioctl (index: %ld, offset: %ld)", index, offset);
+                    if (ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
+                        syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client.", index, offset);
+                        continue;
+                    }
+                } else {
+                    // reset write buffer and write to file
+                    if (write(tmpdata_client_fd, write_buffer, write_buffer_index) == -1) {
+                        syslog(LOG_ERR, "Error writing buffer to client.");
+                        continue;
+                    }
+                    if (write(tmpdata_client_fd, "\n", 1) == -1) {
+                        syslog(LOG_ERR, "Error writing newline to client.");
+                        continue;
+                    }
                 }
 
                 // unlock mutex
@@ -265,7 +294,6 @@ void *client_handler(void *arg) {
                 write_buffer_index = 0;
 
                 // packet was received; send entire contents of file to client
-                lseek(tmpdata_client_fd, 0, SEEK_SET);
                 char file_content[BUFFER_SIZE];
                 size_t bytes_read;
                 while ((bytes_read = read(tmpdata_client_fd, file_content, sizeof(file_content))) > 0) {
@@ -281,7 +309,7 @@ void *client_handler(void *arg) {
     thread_entry_markcomplete(thread_id);
 
     // cleanup
-    close(tmpdata_client_fd);
+    syslog(LOG_DEBUG, "[CLEAN] Cleaning client connection.");
     close(client_fd);
     return NULL;
 }
@@ -289,7 +317,8 @@ void *client_handler(void *arg) {
 /**************************************************************************************************
  * THREAD MANAGER - Tracks threads for entire application
  **************************************************************************************************/
-thread_entry_t *thread_entry_create(pthread_t new_thread_id, const char *new_client_ip, int new_client_fd) {
+thread_entry_t *thread_entry_create(pthread_t new_thread_id, const char *new_client_ip,
+    int new_client_fd, int new_tmpdata_fd) {
     // allocate memory
     thread_entry_t *new_thread_entry = (thread_entry_t *)malloc(sizeof(thread_entry_t));
     if (!new_thread_entry) {
@@ -308,6 +337,7 @@ thread_entry_t *thread_entry_create(pthread_t new_thread_id, const char *new_cli
     }
     new_thread_entry->client_fd = new_client_fd;
     new_thread_entry->is_complete = false;
+    new_thread_entry->tmpdata_fd = new_tmpdata_fd;
 
     // return
     return new_thread_entry;
@@ -425,8 +455,8 @@ void thread_entry_freeall() {
 
 void thread_entry_print(thread_entry_t *current_entry) {
     // print info
-    syslog(LOG_DEBUG, "Thread ID: %d | Client IP: %s | Client FD: %d | Completion Status: %s\n",
-        (int)current_entry->thread_id, current_entry->client_ip, current_entry->client_fd, current_entry->is_complete ? "Yes" : "No");
+    syslog(LOG_DEBUG, "[CLIENT] Thread ID: %d | Client IP: %s | Client FD: %d | Client Data FD: %d | Completion Status: %s\n",
+        (int)current_entry->thread_id, current_entry->client_ip, current_entry->client_fd, current_entry->tmpdata_fd, current_entry->is_complete ? "Yes" : "No");
 }
 
 void thread_entry_printall() {
@@ -434,7 +464,7 @@ void thread_entry_printall() {
     thread_entry_t *current_entry = NULL;
 
     // print header
-    syslog(LOG_DEBUG, "===> THREAD MANAGER HEAD\n");
+    syslog(LOG_DEBUG, "===== [THREAD MANAGER] =====\n");
 
     // lock the manager
     syslog(LOG_DEBUG, "Locking manager mutex.");
@@ -446,7 +476,7 @@ void thread_entry_printall() {
     pthread_mutex_unlock(&manager_mutex);
 
     // print footer
-    syslog(LOG_DEBUG, "===> THREAD MANAGER TAIL\n");
+    syslog(LOG_DEBUG, "===== [THREAD MANAGER] =====\n");
 }
 
 /**************************************************************************************************

@@ -33,12 +33,13 @@ MODULE_LICENSE("Dual BSD/GPL");
 struct aesd_dev aesd_device;
 
 struct file_operations aesd_fops = {
-    .owner =    THIS_MODULE,
-    .read =     aesd_read,
-    .write =    aesd_write,
-    .open =     aesd_open,
-    .release =  aesd_release,
-    .llseek =   aesd_llseek,
+    .owner =            THIS_MODULE,
+    .read =             aesd_read,
+    .write =            aesd_write,
+    .open =             aesd_open,
+    .release =          aesd_release,
+    .llseek =           aesd_llseek,
+    .unlocked_ioctl =   aesd_unlocked_ioctl,
 };
 
 // module open
@@ -274,6 +275,8 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
         }
     }
 
+    PDEBUG("[AESD] aesd_adjust_file_offset New Offset: %lld", calculated_offset);
+
     // valid command offset, update f_pos with calculated offset
     mutex_lock(&filp->f_pos_lock);
     filp->f_pos = calculated_offset;
@@ -298,6 +301,8 @@ long aesd_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             }
             break;
     }
+
+    PDEBUG("[AESD] filp offset after ioctl: %lld", filp->f_pos);
 
     // return
     return retval;

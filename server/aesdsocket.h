@@ -27,6 +27,9 @@
 // multithreading
 #include <pthread.h>
 
+// aesd
+#include "../aesd-char-driver/aesd_ioctl.h"
+
 /**************************************************************************************************
  * CONSTANTS AND GLOBALS
  **************************************************************************************************/
@@ -44,6 +47,10 @@
 #define NUM_CONNECTIONS     10
 #define BUFFER_SIZE         1024 * 1024
 #define TIMER_FREQ_S        10
+
+// ioctl handling
+#define AESD_IOCTL_SEEKTO           "AESDCHAR_IOCSEEKTO:"
+#define AESD_IOCTL_SEEKTO_PARSE     AESD_IOCTL_SEEKTO "%ld,%ld"
 
 // server details
 static int server_socket_fd;
@@ -151,6 +158,7 @@ typedef struct thread_entry_t {
     int                             client_fd;          // client connection fd
     bool                            is_complete;        // thread completion boolean
     SLIST_ENTRY(thread_entry_t)     entries;            // next thread entry
+    int                             tmpdata_fd;         // data file descriptor
 } thread_entry_t;
 
 // define a single head of the linked list, called thread_manager
@@ -167,10 +175,12 @@ pthread_mutex_t manager_mutex = PTHREAD_MUTEX_INITIALIZER;
  * @param new_thread_id             Thread ID
  * @param new_client_ip             Client's IP address
  * @param new_client_fd             File descriptor to access client connection
+ * @param new_tmpdata_fd            File descriptor to access client's data file
  * 
  * @return new thread entry
  */
-thread_entry_t *thread_entry_create(pthread_t new_thread_id, const char *new_client_ip, int new_client_fd);
+thread_entry_t *thread_entry_create(pthread_t new_thread_id, const char *new_client_ip,
+    int new_client_fd, int new_tmpdata_fd);
 
 /**
  * thread_entry_copy()
