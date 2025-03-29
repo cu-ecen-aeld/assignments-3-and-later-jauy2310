@@ -252,7 +252,7 @@ void *client_handler(void *arg) {
                 pthread_mutex_lock(&file_mutex);
 
                 // switch behavior based on the presence of the IOCTL string
-                if (USE_AESD_CHAR_DEVICE && strstr(write_buffer, AESD_IOCTL_SEEKTO)) {
+                if (USE_AESD_CHAR_DEVICE && !strncmp(write_buffer, AESD_IOCTL_SEEKTO, strlen(AESD_IOCTL_SEEKTO))) {
                     // handle ioctl commands
 
                     // parse the index and offset from the command
