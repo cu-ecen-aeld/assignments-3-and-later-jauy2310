@@ -169,7 +169,7 @@ void accept_connections() {
         syslog(LOG_INFO, "Accepted connection from %s", client_ip);
 
         // open file
-        int tmpdata_client_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR | O_CREAT, S_IRUSR | S_IWUSR | S_IRGRP | S_IWGRP);
+        int tmpdata_client_fd = open(TMPDATA_PATH, O_APPEND | O_RDWR);
         if (tmpdata_client_fd == -1) {
             syslog(LOG_ERR, "Failed to open %s", TMPDATA_PATH);
             close(client_fd);
@@ -210,7 +210,7 @@ void accept_connections() {
 
 void *client_handler(void *arg) {
 
-    int tmpdata_client_fd = open("/dev/aesdchar", O_APPEND | O_RDWR);
+    int tmpdata_client_fd = open("/dev/aesdchar", O_RDWR);
 
     int rc = ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, 0, 0);
     if (rc != 0) {
