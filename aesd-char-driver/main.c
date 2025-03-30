@@ -288,28 +288,27 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
 }
 
 long aesd_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
-    return 0;
-    // // define a return value for all ioctls 
-    // long retval = -ENOTTY;
-    // printk(KERN_INFO "[AESD] Received unlocked ioctl");
+    // define a return value for all ioctls 
+    long retval = -ENOTTY;
+    PDEBUG("[AESD] Received unlocked ioctl");
 
-    // // switch statement to handle different ioctl commands
-    // switch (cmd) {
-    //     case AESDCHAR_IOCSEEKTO:
-    //         PDEBUG("[AESD] Received ioctl, cmd: AESDCHAR_IOCSEEKTO.");
-    //         struct aesd_seekto seekto;
-    //         if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) == 0) {
-    //             retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
-    //         } else {
-    //             retval = -EFAULT;
-    //         }
-    //         break;
-    // }
+    // switch statement to handle different ioctl commands
+    switch (cmd) {
+        case AESDCHAR_IOCSEEKTO:
+            PDEBUG("[AESD] Received ioctl, cmd: AESDCHAR_IOCSEEKTO.");
+            struct aesd_seekto seekto;
+            if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) == 0) {
+                retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
+            } else {
+                retval = -EFAULT;
+            }
+            break;
+    }
 
-    // PDEBUG("[AESD] filp offset after ioctl: %lld", filp->f_pos);
+    PDEBUG("[AESD] filp offset after ioctl: %lld", filp->f_pos);
 
-    // // return
-    // return retval;
+    // return
+    return retval;
 }
 
 // module setup cdev

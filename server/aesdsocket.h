@@ -27,7 +27,8 @@
 // multithreading
 #include <pthread.h>
 
-// aesd
+// drivers
+#include <sys/ioctl.h>
 #include "../aesd-char-driver/aesd_ioctl.h"
 
 /**************************************************************************************************
