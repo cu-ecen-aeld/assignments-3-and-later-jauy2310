@@ -262,6 +262,10 @@ void *client_handler(void *arg) {
                         syslog(LOG_ERR, "Parsing ioctl command unsuccessful.");
                     }
 
+                    // clear the write buffer, since we don't need it anymore
+                    memset(write_buffer, 0, BUFFER_SIZE);
+                    write_buffer_index = 0;
+
                     // save to struct
                     struct aesd_seekto seekto;
                     seekto.write_cmd = index;
