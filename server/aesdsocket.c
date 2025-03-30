@@ -217,7 +217,7 @@ void *client_handler(void *arg) {
 
     int rc = ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, 0, 0);
     if (rc != 0) {
-        syslog(LOG_DEBUG, "[TEST] failed ioctl.");
+        syslog(LOG_DEBUG, "[TEST] failed ioctl. (err: %s)", strerror(errno));
     }
 
     return NULL;
