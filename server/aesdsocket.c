@@ -211,8 +211,11 @@ void accept_connections() {
 void *client_handler(void *arg) {
 
     int tmpdata_client_fd = open("/dev/aesdchar", O_RDWR);
+    struct aesd_seekto seekto;
+    seekto.write_cmd = 0;
+    seekto.write_cmd_offset = 0;
 
-    int rc = ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, 0, 0);
+    int rc = ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto);
     if (rc != 0) {
         syslog(LOG_DEBUG, "[TEST] failed ioctl. (err: %s)", strerror(errno));
     }
