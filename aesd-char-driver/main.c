@@ -290,7 +290,7 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
 long aesd_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg) {
     // define a return value for all ioctls 
     long retval = -ENOTTY;
-    printk(KERN_DEBUG "[AESD] Received unlocked ioctl");
+    printk(KERN_INFO "[AESD] Received unlocked ioctl");
 
     // switch statement to handle different ioctl commands
     switch (cmd) {
