@@ -271,7 +271,7 @@ void *client_handler(void *arg) {
                     syslog(LOG_DEBUG, "Received ioctl (index: %ld, offset: %ld)", index, offset);
                     if (ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
                         syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client. (err: %d)", index, offset, errno);
-                        exit;
+                        break;
                     }
                 } else {
                     // reset write buffer and write to file
