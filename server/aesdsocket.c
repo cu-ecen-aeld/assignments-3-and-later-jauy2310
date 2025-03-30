@@ -210,7 +210,7 @@ void accept_connections() {
 
 void *client_handler(void *arg) {
 
-    int tmpdata_client_fd = open("/dev/aesdchar", O_APPEND | O_RDWR | O_CREAT);
+    int tmpdata_client_fd = open("/dev/aesdchar", O_APPEND | O_RDWR);
 
     int rc = ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, 0, 0);
     if (rc != 0) {
