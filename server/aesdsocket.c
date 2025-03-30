@@ -246,6 +246,7 @@ void *client_handler(void *arg) {
             if (read_buffer[i] == '\n') {
                 // packet completed; send to file
                 syslog(LOG_DEBUG, "Packet complete. Data: %s", write_buffer);
+                syslog(LOG_DEBUG, "Read buffer: %s", read_buffer);
 
                 // lock mutex
                 syslog(LOG_DEBUG, "Locking tmpdata mutex.");
@@ -257,7 +258,7 @@ void *client_handler(void *arg) {
 
                     // parse the index and offset from the command
                     size_t index, offset;
-                    if (sscanf(read_buffer, AESD_IOCTL_SEEKTO_PARSE, &index, &offset) != 2) {
+                    if (sscanf(write_buffer, AESD_IOCTL_SEEKTO_PARSE, &index, &offset) != 2) {
                         // parsing unsuccessful
                         syslog(LOG_ERR, "Parsing ioctl command unsuccessful.");
                     }
