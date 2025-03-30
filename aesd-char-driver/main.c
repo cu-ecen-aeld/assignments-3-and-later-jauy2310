@@ -267,11 +267,13 @@ static long aesd_adjust_file_offset(struct file *filp, unsigned int write_cmd, u
     uint8_t index;
     loff_t calculated_offset = 0;
     AESD_CIRCULAR_BUFFER_FOREACH(temp, &aesd_device.circular_buffer, index) {
-        if (index < write_cmd) {
-            calculated_offset += temp->size;
-        } else if (index == write_cmd) {
-            calculated_offset += write_cmd_offset;
-            break;
+        if (temp) {
+            if (index < write_cmd) {
+                calculated_offset += temp->size;
+            } else if (index == write_cmd) {
+                calculated_offset += write_cmd_offset;
+                break;
+            }
         }
     }
 
@@ -298,7 +300,7 @@ long aesd_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
             if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) == 0) {
                 retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
             } else {
-                retval = EFAULT;
+                retval = -EFAULT;
             }
             break;
     }
