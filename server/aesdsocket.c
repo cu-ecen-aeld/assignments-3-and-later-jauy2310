@@ -252,7 +252,7 @@ void *client_handler(void *arg) {
                 pthread_mutex_lock(&file_mutex);
 
                 // switch behavior based on the presence of the IOCTL string
-                if (USE_AESD_CHAR_DEVICE && !strncmp(write_buffer, AESD_IOCTL_SEEKTO, strlen(AESD_IOCTL_SEEKTO))) {
+                if (!strncmp(write_buffer, AESD_IOCTL_SEEKTO, strlen(AESD_IOCTL_SEEKTO))) {
                     // handle ioctl commands
 
                     // parse the index and offset from the command
@@ -274,7 +274,7 @@ void *client_handler(void *arg) {
                     // send ioctl to device
                     syslog(LOG_DEBUG, "Received ioctl (index: %ld, offset: %ld)", index, offset);
                     if (ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
-                        syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client. (err: %d)", index, offset, errno);
+                        syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client. (err: %s)", index, offset, strerror(errno));
                         pthread_mutex_unlock(&file_mutex);
                         break;
                     }
