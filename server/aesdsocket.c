@@ -269,9 +269,8 @@ void *client_handler(void *arg) {
 
                     // send ioctl to device
                     syslog(LOG_DEBUG, "Received ioctl (index: %ld, offset: %ld)", index, offset);
-                    int rc = ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto);
-                    if (rc != 0) {
-                        syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client (err: %d).", index, offset, rc);
+                    if (ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
+                        syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client. (err: %d)", index, offset, errno);
                         continue;
                     }
                 } else {
