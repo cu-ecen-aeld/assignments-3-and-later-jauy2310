@@ -296,13 +296,13 @@ long aesd_unlocked_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
     switch (cmd) {
         case AESDCHAR_IOCSEEKTO:
             PDEBUG("[AESD] Received ioctl, cmd: AESDCHAR_IOCSEEKTO.");
-            struct aesd_seekto seekto;
-            if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) == 0) {
-                retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
-            } else {
-                retval = -EFAULT;
-            }
-            break;
+            // struct aesd_seekto seekto;
+            // if (copy_from_user(&seekto, (const void __user *)arg, sizeof(seekto)) == 0) {
+            //     retval = aesd_adjust_file_offset(filp, seekto.write_cmd, seekto.write_cmd_offset);
+            // } else {
+            //     retval = -EFAULT;
+            // }
+            // break;
     }
 
     PDEBUG("[AESD] filp offset after ioctl: %lld", filp->f_pos);
