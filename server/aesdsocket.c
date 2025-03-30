@@ -215,108 +215,115 @@ void *client_handler(void *arg) {
     int client_fd = connection->client_fd;
     int tmpdata_client_fd = connection->tmpdata_fd;
 
-    // print
-    syslog(LOG_DEBUG, "New connection:");
-    thread_entry_print(connection);
-
-    // read_buffer to store incoming data
-    char read_buffer[BUFFER_SIZE] = {0};
-
-    // write buffer to store outgoing data
-    char write_buffer[BUFFER_SIZE] = {0};
-    int write_buffer_index = 0;
-
-    // infinite loop to process incoming data while connection is open
-    while (1) {
-        // receive data from socket
-        ssize_t bytes_received = recv(client_fd, read_buffer, BUFFER_SIZE, 0);
-
-        // client connection closed
-        if (bytes_received <= 0) {
-            if (connection->client_ip != NULL) {
-                syslog(LOG_INFO, "Closed client connection from %s.", (char *)connection->client_ip);
-            } else {
-                syslog(LOG_INFO, "Closed client connection from unknown.");
-            }
-            break;
-        }
-
-        // for loop to process a single sub-buffer
-        for (int i = 0; i < bytes_received; i++) {
-            if (read_buffer[i] == '\n') {
-                // packet completed; send to file
-                syslog(LOG_DEBUG, "Packet complete. Data: %s", write_buffer);
-
-                // lock mutex
-                syslog(LOG_DEBUG, "Locking tmpdata mutex.");
-                pthread_mutex_lock(&file_mutex);
-
-                // switch behavior based on the presence of the IOCTL string
-                if (!strncmp(write_buffer, AESD_IOCTL_SEEKTO, strlen(AESD_IOCTL_SEEKTO))) {
-                    // handle ioctl commands
-
-                    // parse the index and offset from the command
-                    size_t index, offset;
-                    if (sscanf(write_buffer, AESD_IOCTL_SEEKTO_PARSE, &index, &offset) != 2) {
-                        // parsing unsuccessful
-                        syslog(LOG_ERR, "Parsing ioctl command unsuccessful.");
-                    }
-
-                    // clear the write buffer, since we don't need it anymore
-                    memset(write_buffer, 0, BUFFER_SIZE);
-                    write_buffer_index = 0;
-
-                    // save to struct
-                    struct aesd_seekto seekto;
-                    seekto.write_cmd = index;
-                    seekto.write_cmd_offset = offset;
-
-                    // send ioctl to device
-                    syslog(LOG_DEBUG, "Received ioctl (index: %ld, offset: %ld)", index, offset);
-                    if (ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
-                        syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client. (err: %s)", index, offset, strerror(errno));
-                        pthread_mutex_unlock(&file_mutex);
-                        break;
-                    }
-                } else {
-                    // reset write buffer and write to file
-                    if (write(tmpdata_client_fd, write_buffer, write_buffer_index) == -1) {
-                        syslog(LOG_ERR, "Error writing buffer to client.");
-                        continue;
-                    }
-                    if (write(tmpdata_client_fd, "\n", 1) == -1) {
-                        syslog(LOG_ERR, "Error writing newline to client.");
-                        continue;
-                    }
-                }
-
-                // unlock mutex
-                syslog(LOG_DEBUG, "Unlocking manager mutex.");
-                pthread_mutex_unlock(&file_mutex);
-
-                // reset write buffer
-                memset(write_buffer, 0, BUFFER_SIZE);
-                write_buffer_index = 0;
-
-                // packet was received; send entire contents of file to client
-                char file_content[BUFFER_SIZE];
-                size_t bytes_read;
-                while ((bytes_read = read(tmpdata_client_fd, file_content, sizeof(file_content))) > 0) {
-                    send(client_fd, file_content, bytes_read, 0);
-                }
-            } else {
-                write_buffer[write_buffer_index++] = read_buffer[i];
-            }
-        }
+    int rc = ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, 0, 0);
+    if (rc != 0) {
+        syslog(LOG_DEBUG, "[TEST] failed ioctl.");
     }
 
-    // mark thread as complete
-    thread_entry_markcomplete(thread_id);
-
-    // cleanup
-    syslog(LOG_DEBUG, "[CLEAN] Cleaning client connection.");
-    close(client_fd);
     return NULL;
+
+    // // print
+    // syslog(LOG_DEBUG, "New connection:");
+    // thread_entry_print(connection);
+
+    // // read_buffer to store incoming data
+    // char read_buffer[BUFFER_SIZE] = {0};
+
+    // // write buffer to store outgoing data
+    // char write_buffer[BUFFER_SIZE] = {0};
+    // int write_buffer_index = 0;
+
+    // // infinite loop to process incoming data while connection is open
+    // while (1) {
+    //     // receive data from socket
+    //     ssize_t bytes_received = recv(client_fd, read_buffer, BUFFER_SIZE, 0);
+
+    //     // client connection closed
+    //     if (bytes_received <= 0) {
+    //         if (connection->client_ip != NULL) {
+    //             syslog(LOG_INFO, "Closed client connection from %s.", (char *)connection->client_ip);
+    //         } else {
+    //             syslog(LOG_INFO, "Closed client connection from unknown.");
+    //         }
+    //         break;
+    //     }
+
+    //     // for loop to process a single sub-buffer
+    //     for (int i = 0; i < bytes_received; i++) {
+    //         if (read_buffer[i] == '\n') {
+    //             // packet completed; send to file
+    //             syslog(LOG_DEBUG, "Packet complete. Data: %s", write_buffer);
+
+    //             // lock mutex
+    //             syslog(LOG_DEBUG, "Locking tmpdata mutex.");
+    //             pthread_mutex_lock(&file_mutex);
+
+    //             // switch behavior based on the presence of the IOCTL string
+    //             if (!strncmp(write_buffer, AESD_IOCTL_SEEKTO, strlen(AESD_IOCTL_SEEKTO))) {
+    //                 // handle ioctl commands
+
+    //                 // parse the index and offset from the command
+    //                 size_t index, offset;
+    //                 if (sscanf(write_buffer, AESD_IOCTL_SEEKTO_PARSE, &index, &offset) != 2) {
+    //                     // parsing unsuccessful
+    //                     syslog(LOG_ERR, "Parsing ioctl command unsuccessful.");
+    //                 }
+
+    //                 // clear the write buffer, since we don't need it anymore
+    //                 memset(write_buffer, 0, BUFFER_SIZE);
+    //                 write_buffer_index = 0;
+
+    //                 // save to struct
+    //                 struct aesd_seekto seekto;
+    //                 seekto.write_cmd = index;
+    //                 seekto.write_cmd_offset = offset;
+
+    //                 // send ioctl to device
+    //                 syslog(LOG_DEBUG, "Received ioctl (index: %ld, offset: %ld)", index, offset);
+    //                 if (ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
+    //                     syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client. (err: %s)", index, offset, strerror(errno));
+    //                     pthread_mutex_unlock(&file_mutex);
+    //                     break;
+    //                 }
+    //             } else {
+    //                 // reset write buffer and write to file
+    //                 if (write(tmpdata_client_fd, write_buffer, write_buffer_index) == -1) {
+    //                     syslog(LOG_ERR, "Error writing buffer to client.");
+    //                     continue;
+    //                 }
+    //                 if (write(tmpdata_client_fd, "\n", 1) == -1) {
+    //                     syslog(LOG_ERR, "Error writing newline to client.");
+    //                     continue;
+    //                 }
+    //             }
+
+    //             // unlock mutex
+    //             syslog(LOG_DEBUG, "Unlocking manager mutex.");
+    //             pthread_mutex_unlock(&file_mutex);
+
+    //             // reset write buffer
+    //             memset(write_buffer, 0, BUFFER_SIZE);
+    //             write_buffer_index = 0;
+
+    //             // packet was received; send entire contents of file to client
+    //             char file_content[BUFFER_SIZE];
+    //             size_t bytes_read;
+    //             while ((bytes_read = read(tmpdata_client_fd, file_content, sizeof(file_content))) > 0) {
+    //                 send(client_fd, file_content, bytes_read, 0);
+    //             }
+    //         } else {
+    //             write_buffer[write_buffer_index++] = read_buffer[i];
+    //         }
+    //     }
+    // }
+
+    // // mark thread as complete
+    // thread_entry_markcomplete(thread_id);
+
+    // // cleanup
+    // syslog(LOG_DEBUG, "[CLEAN] Cleaning client connection.");
+    // close(client_fd);
+    // return NULL;
 }
 
 /**************************************************************************************************
