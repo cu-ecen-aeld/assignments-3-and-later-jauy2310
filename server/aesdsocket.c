@@ -246,45 +246,50 @@ void *client_handler(void *arg) {
             if (read_buffer[i] == '\n') {
                 // packet completed; send to file
                 syslog(LOG_DEBUG, "Packet complete. Data: %s", write_buffer);
-                syslog(LOG_DEBUG, "Read buffer: %s", read_buffer);
 
                 // lock mutex
                 syslog(LOG_DEBUG, "Locking tmpdata mutex.");
                 pthread_mutex_lock(&file_mutex);
 
-                // switch behavior based on the presence of the IOCTL string
+
+                // TODO: REMOVE
                 if (USE_AESD_CHAR_DEVICE && !strncmp(write_buffer, AESD_IOCTL_SEEKTO, strlen(AESD_IOCTL_SEEKTO))) {
-                    // handle ioctl commands
-
-                    // parse the index and offset from the command
-                    size_t index, offset;
-                    if (sscanf(write_buffer, AESD_IOCTL_SEEKTO_PARSE, &index, &offset) != 2) {
-                        // parsing unsuccessful
-                        syslog(LOG_ERR, "Parsing ioctl command unsuccessful.");
-                    }
-
-                    // save to struct
-                    struct aesd_seekto seekto;
-                    seekto.write_cmd = index;
-                    seekto.write_cmd_offset = offset;
-
-                    // send ioctl to device
-                    syslog(LOG_DEBUG, "Received ioctl (index: %ld, offset: %ld)", index, offset);
-                    if (ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
-                        syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client. (err: %d)", index, offset, errno);
-                        continue;
-                    }
-                } else {
-                    // reset write buffer and write to file
-                    if (write(tmpdata_client_fd, write_buffer, write_buffer_index) == -1) {
-                        syslog(LOG_ERR, "Error writing buffer to client.");
-                        continue;
-                    }
-                    if (write(tmpdata_client_fd, "\n", 1) == -1) {
-                        syslog(LOG_ERR, "Error writing newline to client.");
-                        continue;
-                    }
+                    syslog(LOG_DEBUG, "Received ioctl");
                 }
+
+                // // switch behavior based on the presence of the IOCTL string
+                // if (USE_AESD_CHAR_DEVICE && !strncmp(write_buffer, AESD_IOCTL_SEEKTO, strlen(AESD_IOCTL_SEEKTO))) {
+                //     // handle ioctl commands
+
+                //     // parse the index and offset from the command
+                //     size_t index, offset;
+                //     if (sscanf(write_buffer, AESD_IOCTL_SEEKTO_PARSE, &index, &offset) != 2) {
+                //         // parsing unsuccessful
+                //         syslog(LOG_ERR, "Parsing ioctl command unsuccessful.");
+                //     }
+
+                //     // save to struct
+                //     struct aesd_seekto seekto;
+                //     seekto.write_cmd = index;
+                //     seekto.write_cmd_offset = offset;
+
+                //     // send ioctl to device
+                //     syslog(LOG_DEBUG, "Received ioctl (index: %ld, offset: %ld)", index, offset);
+                //     if (ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, &seekto) != 0) {
+                //         syslog(LOG_ERR, "Error seeking to index %ld, offset %ld in client. (err: %d)", index, offset, errno);
+                //         continue;
+                //     }
+                // } else {
+                //     // reset write buffer and write to file
+                //     if (write(tmpdata_client_fd, write_buffer, write_buffer_index) == -1) {
+                //         syslog(LOG_ERR, "Error writing buffer to client.");
+                //         continue;
+                //     }
+                //     if (write(tmpdata_client_fd, "\n", 1) == -1) {
+                //         syslog(LOG_ERR, "Error writing newline to client.");
+                //         continue;
+                //     }
+                // }
 
                 // unlock mutex
                 syslog(LOG_DEBUG, "Unlocking manager mutex.");
