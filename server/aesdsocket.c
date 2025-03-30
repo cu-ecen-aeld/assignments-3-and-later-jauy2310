@@ -209,11 +209,8 @@ void accept_connections() {
 }
 
 void *client_handler(void *arg) {
-    // define the client fd
-    thread_entry_t *connection = (thread_entry_t *)arg;
-    pthread_t thread_id = connection->thread_id;
-    int client_fd = connection->client_fd;
-    int tmpdata_client_fd = connection->tmpdata_fd;
+
+    int tmpdata_client_fd = open("/dev/aesdchar", O_APPEND | O_RDWR | O_CREAT);
 
     int rc = ioctl(tmpdata_client_fd, AESDCHAR_IOCSEEKTO, 0, 0);
     if (rc != 0) {
@@ -221,6 +218,12 @@ void *client_handler(void *arg) {
     }
 
     return NULL;
+
+    // // define the client fd
+    // thread_entry_t *connection = (thread_entry_t *)arg;
+    // pthread_t thread_id = connection->thread_id;
+    // int client_fd = connection->client_fd;
+    // int tmpdata_client_fd = connection->tmpdata_fd;
 
     // // print
     // syslog(LOG_DEBUG, "New connection:");
